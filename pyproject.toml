@@ -18,15 +18,6 @@ dependencies = [
     "awscrt>=0.38.1",
 ]
 
-[project.optional-dependencies]
-# Remote training / Batch Transform container dependencies (never fitted on local hardware per PRD F2)
-remote-ml = [
-    "lightgbm>=4.5",
-    "catboost>=1.2.7",
-    "scikit-learn>=1.5",
-    "shap>=0.46",
-]
-
 [project.scripts]
 waymark = "waymark.cli:main"
 
@@ -43,7 +34,7 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -m 'not cloud'"
 markers = [
     "cloud: live AWS read/write integration checks (disabled by default)",
 ]

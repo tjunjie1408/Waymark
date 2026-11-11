@@ -14,7 +14,7 @@ from waymark.sagemaker_entry import (
     expected_calibration_error,
     pinball_loss,
 )
-from waymark.training import SKLEARN_CONTAINER_URI, create_sourcedir_tarball
+from waymark.training import create_sourcedir_tarball
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,6 +69,3 @@ def test_pinball_loss_and_ece_metrics() -> None:
     y_perfect_prob = np.array([0.05, 0.95, 0.05, 0.95])
     ece_good = expected_calibration_error(y_binary, y_perfect_prob, n_bins=5)
     assert ece_good < 0.10
-
-    # Container URI in ap-southeast-2
-    assert "ap-southeast-2" in SKLEARN_CONTAINER_URI

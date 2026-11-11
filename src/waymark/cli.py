@@ -7,21 +7,21 @@ import json
 import sys
 from pathlib import Path
 
+from waymark.artifacts import canonical_json, write_immutable
 from waymark.bronze_silver import build_bronze, build_silver
 from waymark.cloud_slice import run_c1_orchestration
 from waymark.contracts import load_discriminating_fixture, load_wm0_contract
 from waymark.features_splits import build_t5_features_and_splits
 from waymark.gold_model import build_gold_analytical_model, verify_duckdb_sql_equivalence
-from waymark.training import run_remote_training
+from waymark.snapshots import build_lake_snapshot
+from waymark.training import create_sourcedir_tarball, run_remote_training
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="waymark", description="Waymark fulfillment DE/DS CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    verify_parser = subparsers.add_parser(
-        "verify-wm0", help="Validate WM0 contract and synthetic fixture"
-    )
+    verify_parser = subparsers.add_parser("verify-wm0", help="Validate WM0 contract and synthetic fixture")
     verify_parser.add_argument("--contract", default="configs/wm0_contract.yaml")
     verify_parser.add_argument("--fixture", default="configs/t1_discriminating_fixture.json")
 
@@ -78,8 +78,61 @@ def main(argv: list[str] | None = None) -> int:
     train_parser.add_argument("--profile", default="waymark")
     train_parser.add_argument("--region", default="ap-southeast-2")
     train_parser.add_argument("--no-spot", action="store_true", help="Disable Managed Spot training")
+    train_parser.add_argument("--cloud-receipt", type=Path, required=True)
+    train_parser.add_argument("--environment-receipt", type=Path, required=True)
+    train_parser.add_argument("--on-demand-hourly-rate", type=float)
+    train_parser.add_argument(
+        "--rate-source", default="", help="Dated regional price source, not a Spot rate"
+    )
+    train_parser.add_argument(
+        "--allow-holdout",
+        action="store_true",
+        help="Explicitly authorize one final holdout evaluation after development freeze",
+    )
+    prepare_parser = subparsers.add_parser(
+        "prepare-cloud-snapshot", help="Prepare a local immutable inventory only"
+    )
+    prepare_parser.add_argument("--output", type=Path, required=True)
+    source_parser = subparsers.add_parser(
+        "prepare-training-source", help="Package remote source without fitting or AWS calls"
+    )
+    source_parser.add_argument("--output", type=Path, required=True)
 
     args = parser.parse_args(argv)
+    if args.command == "prepare-training-source":
+        import hashlib
+
+        payload = create_sourcedir_tarball(Path(__file__).resolve().parents[2])
+        write_immutable(args.output, payload)
+        print(
+            json.dumps(
+                {
+                    "output": str(args.output),
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "status": "PREPARED_LOCALLY_NOT_UPLOADED",
+                }
+            )
+        )
+        return 0
+    if args.command == "prepare-cloud-snapshot":
+        root = Path(__file__).resolve().parents[2]
+        snapshot = build_lake_snapshot(root)
+        write_immutable(args.output, canonical_json(snapshot))
+        contract = load_wm0_contract(root / "configs/wm0_contract.yaml")
+        o7 = contract.o7_aws_and_cost
+        bucket = f"waymark-lake-pilot-{o7.account_id}-{o7.region}"
+        print(
+            json.dumps(
+                {
+                    "snapshot_id": snapshot["snapshot_id"],
+                    "output": str(args.output),
+                    "glue_snapshot_script_uri": f"s3://{bucket}/snapshots/{snapshot['snapshot_id']}/scripts/glue_etl_entry.py",
+                    "status": "PREPARED_LOCALLY_NOT_UPLOADED",
+                },
+                indent=2,
+            )
+        )
+        return 0
     if args.command == "verify-wm0":
         contract = load_wm0_contract(args.contract)
         fixture = load_discriminating_fixture(args.fixture)
@@ -120,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.export_summary:
             summary_path = Path(args.export_summary)
             summary_path.parent.mkdir(parents=True, exist_ok=True)
-            summary_path.write_text(json.dumps(combined, indent=2) + "\n", encoding="utf-8")
+            write_immutable(summary_path, (json.dumps(combined, indent=2) + "\n").encode())
         print(json.dumps(combined, indent=2))
         return 0
 
@@ -147,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.export_summary:
             summary_path = Path(args.export_summary)
             summary_path.parent.mkdir(parents=True, exist_ok=True)
-            summary_path.write_text(json.dumps(combined, indent=2) + "\n", encoding="utf-8")
+            write_immutable(summary_path, (json.dumps(combined, indent=2) + "\n").encode())
         print(json.dumps(combined, indent=2))
         return 0
 
@@ -161,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.export_summary:
             summary_path = Path(args.export_summary)
             summary_path.parent.mkdir(parents=True, exist_ok=True)
-            summary_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            write_immutable(summary_path, (json.dumps(manifest, indent=2) + "\n").encode())
         print(json.dumps(manifest, indent=2))
         return 0
 
@@ -178,6 +231,11 @@ def main(argv: list[str] | None = None) -> int:
             profile_name=args.profile,
             region_name=args.region,
             use_spot=not args.no_spot,
+            cloud_receipt_path=args.cloud_receipt,
+            environment_receipt_path=args.environment_receipt,
+            allow_holdout=args.allow_holdout,
+            rate_usd_per_hour=args.on_demand_hourly_rate,
+            rate_source=args.rate_source,
         )
         print(json.dumps(report, indent=2))
         return 0
