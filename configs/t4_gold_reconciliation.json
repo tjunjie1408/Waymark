@@ -1,0 +1,114 @@
+{
+  "status": "OK",
+  "stage": "T4",
+  "contract_id": "wm0_v1",
+  "contract_version": "1.0.0",
+  "gold_reconciliation": {
+    "contract_id": "wm0_v1",
+    "contract_version": "1.0.0",
+    "fact_table": "fact_order_fulfillment.parquet",
+    "grain_check": {
+      "silver_orders_count": 99441,
+      "gold_fact_rows": 99441,
+      "gold_distinct_order_ids": 99441,
+      "one_row_per_order_id": true
+    },
+    "monetary_and_count_reconciliation": {
+      "silver_items_row_count": 112650,
+      "gold_sum_item_count": 112650,
+      "silver_sum_item_price_brl": 13591643.7,
+      "gold_sum_item_price_brl": 13591643.7,
+      "price_abs_diff": 0.0,
+      "silver_sum_freight_brl": 2251909.54,
+      "gold_sum_freight_brl": 2251909.54,
+      "freight_abs_diff": 0.0,
+      "silver_payments_row_count": 103886,
+      "gold_sum_payment_row_count": 103886,
+      "silver_sum_payment_value_brl": 16008872.12,
+      "gold_sum_payment_value_brl": 16008872.12,
+      "payment_abs_diff": 1.862645149230957e-09
+    },
+    "multiplicity_summary": {
+      "orders_with_zero_items": 775,
+      "single_item_orders": 88863,
+      "multi_item_orders": 9803,
+      "multi_seller_orders": 1278,
+      "orders_with_dim_missing_flag": 797,
+      "orders_with_geo_missing_flag": 1266,
+      "interstate_orders": 63190
+    },
+    "dimensions": {
+      "dim_seller_rows": 3095,
+      "dim_customer_rows": 99441,
+      "dim_product_rows": 32951,
+      "dim_geolocation_zip_rows": 19010
+    }
+  },
+  "duckdb_sql_parity": {
+    "status": "OK",
+    "compared_rows": 99441,
+    "exact_columns_verified": [
+      "eligibility_code",
+      "is_eligible_mature",
+      "item_count",
+      "distinct_seller_count",
+      "dim_missing_flag",
+      "primary_seller_id",
+      "payment_row_count",
+      "max_payment_installments",
+      "primary_payment_type",
+      "geo_missing_flag"
+    ],
+    "float_columns_max_abs_diff": {
+      "total_item_price_brl": 4.547473508864641e-13,
+      "total_freight_brl": 1.1368683772161603e-13,
+      "total_weight_g": 0.0,
+      "total_volume_cm3": 0.0,
+      "total_payment_value_brl": 1.1368683772161603e-13,
+      "primary_seller_haversine_km": 4.547473508864641e-13
+    },
+    "tolerance": 1e-06,
+    "top_5_corridors_reference_query": [
+      {
+        "state_corridor": "SP->SP",
+        "eligible_orders": 30675,
+        "mean_eta_days": 7.5543,
+        "median_eta_days": 6.1945,
+        "late_rate": 0.0623,
+        "mean_distance_km": 150.15
+      },
+      {
+        "state_corridor": "SP->RJ",
+        "eligible_orders": 8152,
+        "mean_eta_days": 15.8945,
+        "median_eta_days": 12.3549,
+        "late_rate": 0.1551,
+        "mean_distance_km": 440.95
+      },
+      {
+        "state_corridor": "SP->MG",
+        "eligible_orders": 7433,
+        "mean_eta_days": 11.9343,
+        "median_eta_days": 10.2751,
+        "late_rate": 0.0635,
+        "mean_distance_km": 495.2
+      },
+      {
+        "state_corridor": "SP->RS",
+        "eligible_orders": 3591,
+        "mean_eta_days": 15.67,
+        "median_eta_days": 13.2489,
+        "late_rate": 0.076,
+        "mean_distance_km": 906.49
+      },
+      {
+        "state_corridor": "SP->PR",
+        "eligible_orders": 3118,
+        "mean_eta_days": 12.3189,
+        "median_eta_days": 10.6745,
+        "late_rate": 0.0536,
+        "mean_distance_km": 463.12
+      }
+    ]
+  }
+}
