@@ -22,7 +22,7 @@ The project total cloud-spend cap is USD 30. The USD 8.50 pilot figure in the ex
 
 ![Waymark AWS Architecture](docs/images/waymark_aws_architecture.png)
 
-> Purpose: predict order delivery time and late-delivery risk, then publish complete, reproducible prediction batches for analysis. The horizontal framework distinguishes model release from recurring scoring and includes target integrations; it is not deployment evidence. Training and end-to-end scoring remain unexecuted. See the [purpose and handoff notes](docs/architecture.md), [deployment preparation](docs/operations.md#before-the-next-terraform-apply), [editable source](docs/images/waymark_aws_architecture.drawio), and [SVG](docs/images/waymark_aws_architecture.svg).
+> Purpose: predict order delivery time and late-delivery risk, then publish complete, reproducible prediction batches for analysis. The horizontal framework distinguishes model release from recurring scoring and includes target integrations; it is not deployment evidence. Training and end-to-end scoring remain unexecuted. See the [purpose and handoff notes](docs/architecture.md) and [deployment preparation](docs/operations.md#before-the-next-terraform-apply).
 
 Local batch preparation now binds accepted model/input identities, provides prediction-only serving, finalizes successful JSONLines output into committed Parquet, and exposes only verified commits to readers. Publication is an explicit CLI operation; see the [batch delivery guide](docs/batch-delivery.md). Real model training, serving-image verification and scheduled end-to-end AWS acceptance remain separate work.
 
@@ -64,7 +64,7 @@ waymark/
 │   ├── t4_gold_reconciliation.json   # DuckDB SQL parity metrics
 │   └── t5_wm2_split_manifest.json    # 70-15-15 chronological split metadata
 ├── docs/
-│   └── images/                       # Architecture diagrams (.png and .drawio)
+│   └── images/                       # Architecture diagram (PNG)
 ├── infra/
 │   └── terraform/                    # Infrastructure as Code (S3, Glue, Athena, Lambda, IAM)
 │       ├── main.tf
@@ -72,7 +72,6 @@ waymark/
 │       ├── variables.tf
 │       └── versions.tf
 ├── scripts/
-│   ├── build_drawio_diagram.py       # Validate/render the canonical draw.io source
 │   └── glue_etl_entry.py             # Serverless Glue Python Shell entrypoint
 ├── src/
 │   └── waymark/                      # Core Python package

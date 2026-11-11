@@ -2,8 +2,6 @@
 
 ![Waymark AWS workflow](images/waymark_aws_architecture.png)
 
-[Editable source](images/waymark_aws_architecture.drawio) · [Vector SVG](images/waymark_aws_architecture.svg)
-
 The purpose is to predict approval-to-delivery time and late-delivery risk using only information available at order approval, then deliver complete, reproducible prediction batches for analysis. The numbered horizontal line is the target logical workflow. Supporting paths remain subordinate to it; execution status is recorded below the illustration.
 
 | Stage | Why it exists | Input -> output | Handoff condition / owner |
@@ -28,16 +26,9 @@ Historical S3, Glue Catalog and Athena receipts remain in `configs/c1_cloud_reco
 
 Current Terraform declares no VPC, subnet, security group or VPC endpoint. The diagram therefore uses an AWS Cloud boundary without invented network isolation. The footer names cross-cutting dependencies; it does not assert least-privilege IAM or a hard spending cap.
 
-## Edit and export
+## Diagram artifact
 
-The `.drawio` file is the sole diagram source. Edit it in draw.io or through the draw.io MCP, inspect the result, then export PNG and SVG beside it. `scripts/build_drawio_diagram.py` checks or exports that source; it no longer regenerates the obsolete network topology.
-
-```powershell
-uv run python scripts/build_drawio_diagram.py --check
-# Optional exports through an installed draw.io desktop CLI:
-uv run python scripts/build_drawio_diagram.py --drawio PATH_TO_DRAWIO --format png
-uv run python scripts/build_drawio_diagram.py --drawio PATH_TO_DRAWIO --format svg
-```
+Only the PNG architecture diagram is published in this repository. Authoring source and tools remain local.
 
 Visual reference: [AWS architecture icons and diagramming resources](https://aws.amazon.com/architecture/icons/). AWS4 library icons retain service colors; the canvas and boundary remain neutral. Connectors are orthogonal. The main line shows data and model lifecycle dependencies; dashed lines show control and metadata dependencies.
 
