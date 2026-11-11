@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from waymark.artifacts import require_new_outputs, write_immutable, write_parquet_immutable
 from waymark.contracts import WM0Contract, load_discriminating_fixture, load_wm0_contract
 
 TIMESTAMP_COLUMNS: dict[str, list[str]] = {
@@ -77,14 +78,22 @@ def build_bronze(
     total_bytes = 0
 
     expected_tables = contract.o1_source["expected_tables"]
+    require_new_outputs(
+        bronze_dir, [f"{name}.parquet" for name in expected_tables] + ["bronze_manifest.json"]
+    )
+    # Validate all headers before creating a partial snapshot.
+    for table_key, spec in expected_tables.items():
+        csv_path = raw_dir / spec["filename"]
+        if not csv_path.is_file():
+            raise FileNotFoundError(f"Missing required Olist table '{table_key}' at {csv_path}")
+        if list(pd.read_csv(csv_path, nrows=0).columns) != spec["columns"]:
+            raise ValueError(f"Column mismatch in {spec['filename']}")
     for table_key, spec in expected_tables.items():
         filename = spec["filename"]
         expected_cols = spec["columns"]
         csv_path = raw_dir / filename
         if not csv_path.exists():
-            raise FileNotFoundError(
-                f"Missing required Olist table '{table_key}' at {csv_path}"
-            )
+            raise FileNotFoundError(f"Missing required Olist table '{table_key}' at {csv_path}")
 
         sha256_hex = compute_sha256(csv_path)
         size_bytes = csv_path.stat().st_size
@@ -92,12 +101,10 @@ def build_bronze(
 
         actual_cols = list(df.columns)
         if actual_cols != expected_cols:
-            raise ValueError(
-                f"Column mismatch in {filename}: expected {expected_cols}, got {actual_cols}"
-            )
+            raise ValueError(f"Column mismatch in {filename}: expected {expected_cols}, got {actual_cols}")
 
         parquet_path = bronze_dir / f"{table_key}.parquet"
-        df.to_parquet(parquet_path, index=False, engine="pyarrow")
+        write_parquet_immutable(df, parquet_path)
 
         row_count = int(len(df))
         total_rows += row_count
@@ -122,7 +129,7 @@ def build_bronze(
         "tables": tables_manifest,
     }
     manifest_path = bronze_dir / "bronze_manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    write_immutable(manifest_path, (json.dumps(manifest, indent=2) + "\n").encode())
     return manifest
 
 
@@ -148,11 +155,7 @@ def _classify_order_eligibility(
     # 4. Non-delivered status or missing delivery timestamp -> EXCL_UNDELIVERED_OR_MISSING_DELIVERY_TS
     # 5. Non-positive actual delivery duration -> EXCL_NONPOSITIVE_DURATION
     nonpositive_mask = (
-        has_approval
-        & status.eq("delivered")
-        & has_items
-        & has_delivery
-        & (duration_days <= 0.0)
+        has_approval & status.eq("delivered") & has_items & has_delivery & (duration_days <= 0.0)
     )
     codes = codes.mask(nonpositive_mask, "EXCL_NONPOSITIVE_DURATION")
 
@@ -183,6 +186,26 @@ def build_silver(
 ) -> dict[str, Any]:
     """Transform Bronze Parquet tables into typed, cleaned Silver Parquet tables with full accounting."""
     silver_dir.mkdir(parents=True, exist_ok=True)
+    require_new_outputs(
+        silver_dir,
+        [
+            "silver_accounting.json",
+            *[
+                f"{name}.parquet"
+                for name in (
+                    "silver_orders",
+                    "silver_order_items",
+                    "silver_order_payments",
+                    "silver_order_reviews",
+                    "silver_products",
+                    "silver_sellers",
+                    "silver_customers",
+                    "silver_geolocation_zip",
+                    "silver_category_translations",
+                )
+            ],
+        ],
+    )
 
     # 1. Load Bronze tables
     orders = pd.read_parquet(bronze_dir / "olist_orders_dataset.parquet")
@@ -193,9 +216,7 @@ def build_silver(
     sellers = pd.read_parquet(bronze_dir / "olist_sellers_dataset.parquet")
     customers = pd.read_parquet(bronze_dir / "olist_customers_dataset.parquet")
     geolocation = pd.read_parquet(bronze_dir / "olist_geolocation_dataset.parquet")
-    translations = pd.read_parquet(
-        bronze_dir / "product_category_name_translation.parquet"
-    )
+    translations = pd.read_parquet(bronze_dir / "product_category_name_translation.parquet")
 
     # 2. Parse timestamps across orders, items, reviews
     for col in TIMESTAMP_COLUMNS["olist_orders_dataset"]:
@@ -213,9 +234,7 @@ def build_silver(
         items[["order_id", "order_item_id"]].isna().any().any()
         or items.duplicated(subset=["order_id", "order_item_id"]).any()
     ):
-        raise ValueError(
-            "Silver gate failed: duplicate or null (order_id, order_item_id) in order_items"
-        )
+        raise ValueError("Silver gate failed: duplicate or null (order_id, order_item_id) in order_items")
 
     if (
         payments[["order_id", "payment_sequential"]].isna().any().any()
@@ -231,13 +250,25 @@ def build_silver(
     if sellers["seller_id"].isna().any() or sellers["seller_id"].duplicated().any():
         raise ValueError("Silver gate failed: duplicate or null seller_id in sellers")
 
+    if customers["customer_id"].isna().any() or customers["customer_id"].duplicated().any():
+        raise ValueError("Silver gate failed: duplicate or null customer_id in customers")
+
+    for child, key, parent, parent_key in [
+        (orders, "customer_id", customers, "customer_id"),
+        (items, "order_id", orders, "order_id"),
+        (payments, "order_id", orders, "order_id"),
+        (reviews, "order_id", orders, "order_id"),
+        (items, "product_id", products, "product_id"),
+        (items, "seller_id", sellers, "seller_id"),
+    ]:
+        invalid = child[key].isna() | ~child[key].isin(parent[parent_key])
+        if invalid.any():
+            raise ValueError(f"Silver foreign key violation: {key}, {int(invalid.sum())} orphan/null rows")
     if (
-        customers["customer_id"].isna().any()
-        or customers["customer_id"].duplicated().any()
+        translations["product_category_name"].isna().any()
+        or translations["product_category_name"].duplicated().any()
     ):
-        raise ValueError(
-            "Silver gate failed: duplicate or null customer_id in customers"
-        )
+        raise ValueError("Silver gate failed: duplicate or null product_category_name translation key")
 
     # 4. Clean and normalize Products (fix *_lenght spelling, flag missing/zero dimensions)
     products = products.rename(
@@ -252,9 +283,7 @@ def build_silver(
         "product_height_cm",
         "product_width_cm",
     ]:
-        products[num_col] = pd.to_numeric(products[num_col], errors="coerce").astype(
-            "float64"
-        )
+        products[num_col] = pd.to_numeric(products[num_col], errors="coerce").astype("float64")
 
     dim_invalid_mask = (
         products["product_weight_g"].isna()
@@ -270,15 +299,11 @@ def build_silver(
     products["product_volume_cm3"] = np.where(
         dim_invalid_mask,
         0.0,
-        products["product_length_cm"]
-        * products["product_height_cm"]
-        * products["product_width_cm"],
+        products["product_length_cm"] * products["product_height_cm"] * products["product_width_cm"],
     ).astype("float64")
 
     # Join category translation onto products
-    translations["product_category_name"] = (
-        translations["product_category_name"].astype(str).str.strip()
-    )
+    translations["product_category_name"] = translations["product_category_name"].astype(str).str.strip()
     translations["product_category_name_english"] = (
         translations["product_category_name_english"].astype(str).str.strip()
     )
@@ -288,9 +313,7 @@ def build_silver(
         how="left",
     )
     missing_cat_mask = products["product_category_name"].isna()
-    untranslated_mask = (
-        ~missing_cat_mask & products["product_category_name_english"].isna()
-    )
+    untranslated_mask = ~missing_cat_mask & products["product_category_name_english"].isna()
     products["product_category_name_english"] = np.where(
         missing_cat_mask,
         "unknown",
@@ -310,25 +333,20 @@ def build_silver(
         .astype(str)
         .str.zfill(5)
     )
-    geolocation["geolocation_lat"] = pd.to_numeric(
-        geolocation["geolocation_lat"], errors="coerce"
-    ).astype("float64")
-    geolocation["geolocation_lng"] = pd.to_numeric(
-        geolocation["geolocation_lng"], errors="coerce"
-    ).astype("float64")
+    geolocation["geolocation_lat"] = pd.to_numeric(geolocation["geolocation_lat"], errors="coerce").astype(
+        "float64"
+    )
+    geolocation["geolocation_lng"] = pd.to_numeric(geolocation["geolocation_lng"], errors="coerce").astype(
+        "float64"
+    )
 
     geo_deduped = geolocation.drop_duplicates().copy()
     geo_deduped_rows = int(len(geo_deduped))
     geo_exact_dups_dropped = geo_raw_rows - geo_deduped_rows
 
-    in_bounds_mask = (
-        geo_deduped["geolocation_lat"].between(
-            bbox["lat_min"], bbox["lat_max"], inclusive="both"
-        )
-        & geo_deduped["geolocation_lng"].between(
-            bbox["lng_min"], bbox["lng_max"], inclusive="both"
-        )
-    )
+    in_bounds_mask = geo_deduped["geolocation_lat"].between(
+        bbox["lat_min"], bbox["lat_max"], inclusive="both"
+    ) & geo_deduped["geolocation_lng"].between(bbox["lng_min"], bbox["lng_max"], inclusive="both")
     geo_in_bounds = geo_deduped.loc[in_bounds_mask].copy()
     geo_in_bounds_rows = int(len(geo_in_bounds))
     geo_out_of_bounds_dropped = geo_deduped_rows - geo_in_bounds_rows
@@ -365,9 +383,7 @@ def build_silver(
             "geolocation_lng": "seller_lng",
         }
     )
-    sellers["seller_geo_missing_flag"] = (
-        sellers["seller_lat"].isna().astype("int64")
-    )
+    sellers["seller_geo_missing_flag"] = sellers["seller_lat"].isna().astype("int64")
 
     customers["customer_zip_code_prefix"] = (
         pd.to_numeric(customers["customer_zip_code_prefix"], errors="raise")
@@ -387,38 +403,28 @@ def build_silver(
             "geolocation_lng": "customer_lng",
         }
     )
-    customers["customer_geo_missing_flag"] = (
-        customers["customer_lat"].isna().astype("int64")
-    )
+    customers["customer_geo_missing_flag"] = customers["customer_lat"].isna().astype("int64")
 
     # 7. Type-cast Order Items, Payments, Reviews
     items["order_item_id"] = items["order_item_id"].astype("int64")
     items["price"] = pd.to_numeric(items["price"], errors="raise").astype("float64")
-    items["freight_value"] = pd.to_numeric(
-        items["freight_value"], errors="raise"
-    ).astype("float64")
+    items["freight_value"] = pd.to_numeric(items["freight_value"], errors="raise").astype("float64")
 
     payments["payment_sequential"] = payments["payment_sequential"].astype("int64")
     payments["payment_installments"] = payments["payment_installments"].astype("int64")
-    payments["payment_value"] = pd.to_numeric(
-        payments["payment_value"], errors="raise"
-    ).astype("float64")
+    payments["payment_value"] = pd.to_numeric(payments["payment_value"], errors="raise").astype("float64")
 
     reviews_raw_rows = int(len(reviews))
     reviews_deduped = reviews.drop_duplicates(subset=["review_id", "order_id"]).copy()
     reviews_deduped_rows = int(len(reviews_deduped))
-    reviews_deduped["review_score"] = pd.to_numeric(
-        reviews_deduped["review_score"], errors="coerce"
-    ).astype("float64")
+    reviews_deduped["review_score"] = pd.to_numeric(reviews_deduped["review_score"], errors="coerce").astype(
+        "float64"
+    )
 
     # 8. Order eligibility and target derivation (O3)
     order_ids_with_items = set(items["order_id"].unique())
-    orders["eligibility_code"] = _classify_order_eligibility(
-        orders, order_ids_with_items
-    )
-    orders["is_eligible_mature"] = (
-        orders["eligibility_code"].eq("ELIGIBLE_MATURE").astype("int64")
-    )
+    orders["eligibility_code"] = _classify_order_eligibility(orders, order_ids_with_items)
+    orders["is_eligible_mature"] = orders["eligibility_code"].eq("ELIGIBLE_MATURE").astype("int64")
     orders["delivery_duration_days"] = (
         orders["order_delivered_customer_date"] - orders["order_approved_at"]
     ).dt.total_seconds() / 86400.0
@@ -427,33 +433,26 @@ def build_silver(
     ).dt.total_seconds() / 86400.0
     orders["is_late_delivered"] = np.where(
         orders["is_eligible_mature"].eq(1),
-        (
-            orders["order_delivered_customer_date"]
-            > orders["order_estimated_delivery_date"]
-        ).astype("float64"),
+        (orders["order_delivered_customer_date"] > orders["order_estimated_delivery_date"]).astype("float64"),
         np.nan,
     )
 
     # 9. Write Silver Parquet outputs
-    orders.to_parquet(silver_dir / "silver_orders.parquet", index=False)
-    items.to_parquet(silver_dir / "silver_order_items.parquet", index=False)
-    payments.to_parquet(silver_dir / "silver_order_payments.parquet", index=False)
-    reviews_deduped.to_parquet(silver_dir / "silver_order_reviews.parquet", index=False)
-    products.to_parquet(silver_dir / "silver_products.parquet", index=False)
-    sellers.to_parquet(silver_dir / "silver_sellers.parquet", index=False)
-    customers.to_parquet(silver_dir / "silver_customers.parquet", index=False)
-    geo_zip.to_parquet(silver_dir / "silver_geolocation_zip.parquet", index=False)
-    translations.to_parquet(
-        silver_dir / "silver_category_translations.parquet", index=False
-    )
+    write_parquet_immutable(orders, silver_dir / "silver_orders.parquet")
+    write_parquet_immutable(items, silver_dir / "silver_order_items.parquet")
+    write_parquet_immutable(payments, silver_dir / "silver_order_payments.parquet")
+    write_parquet_immutable(reviews_deduped, silver_dir / "silver_order_reviews.parquet")
+    write_parquet_immutable(products, silver_dir / "silver_products.parquet")
+    write_parquet_immutable(sellers, silver_dir / "silver_sellers.parquet")
+    write_parquet_immutable(customers, silver_dir / "silver_customers.parquet")
+    write_parquet_immutable(geo_zip, silver_dir / "silver_geolocation_zip.parquet")
+    write_parquet_immutable(translations, silver_dir / "silver_category_translations.parquet")
 
     eligibility_counts = {
-        str(k): int(v)
-        for k, v in orders["eligibility_code"].value_counts().sort_index().items()
+        str(k): int(v) for k, v in orders["eligibility_code"].value_counts().sort_index().items()
     }
     order_status_counts = {
-        str(k): int(v)
-        for k, v in orders["order_status"].value_counts().sort_index().items()
+        str(k): int(v) for k, v in orders["order_status"].value_counts().sort_index().items()
     }
 
     accounting = {
@@ -505,15 +504,11 @@ def build_silver(
         },
         "customers": {
             "raw_row_count": int(len(customers)),
-            "distinct_customer_unique_id_count": int(
-                customers["customer_unique_id"].nunique()
-            ),
+            "distinct_customer_unique_id_count": int(customers["customer_unique_id"].nunique()),
             "geo_missing_count": int(customers["customer_geo_missing_flag"].sum()),
         },
     }
 
     accounting_path = silver_dir / "silver_accounting.json"
-    accounting_path.write_text(
-        json.dumps(accounting, indent=2) + "\n", encoding="utf-8"
-    )
+    write_immutable(accounting_path, (json.dumps(accounting, indent=2) + "\n").encode())
     return accounting

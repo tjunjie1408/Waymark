@@ -10,44 +10,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from waymark.artifacts import require_new_outputs, write_immutable, write_parquet_immutable
 from waymark.contracts import WM0Contract
-
-FEATURE_COLUMNS: list[str] = [
-    "primary_seller_haversine_km",
-    "max_seller_haversine_km",
-    "mean_seller_haversine_km",
-    "is_interstate",
-    "geo_missing_flag",
-    "item_count",
-    "distinct_seller_count",
-    "distinct_product_count",
-    "is_multi_seller",
-    "total_item_price_brl",
-    "total_freight_brl",
-    "freight_to_price_ratio",
-    "total_weight_g",
-    "total_volume_cm3",
-    "volumetric_density_g_per_cm3",
-    "dim_missing_flag",
-    "promised_days",
-    "approval_lag_hours",
-    "shipping_limit_days_from_approval",
-    "approval_dow",
-    "approval_month",
-    "primary_payment_type",
-    "max_payment_installments",
-    "primary_seller_id",
-    "primary_seller_state",
-    "customer_state",
-    "state_corridor",
-    "primary_product_category_name_english",
-    "congestion_order_count_30d",
-    "seller_delivered_count_30d",
-    "seller_late_count_30d",
-    "seller_cold_start_flag",
-    "seller_late_rate_30d_smoothed",
-    "seller_median_eta_days_30d",
-]
+from waymark.feature_schema import FEATURE_COLUMNS
 
 FORBIDDEN_FEATURE_COLUMNS: set[str] = {
     "order_delivered_carrier_date",
@@ -87,7 +52,8 @@ def compute_seller_rolling_30d_features(
     - `seller_median_eta_days_30d`: median(o'.y_days) over the mature delivered set if
       count >= min_mature_orders, else NaN.
     """
-    df = fact_df.copy()
+    original_index = fact_df.index.copy()
+    df = fact_df.reset_index(drop=True).copy()
     n_rows = len(df)
 
     congestion_counts = np.zeros(n_rows, dtype="int64")
@@ -120,15 +86,11 @@ def compute_seller_rolling_30d_features(
         sorted_deliv_times = deliv_times[deliv_order]
         cum_deliv_late = np.cumsum(deliv_late[deliv_order])
 
-        app_times_all = (
-            df["order_approved_at"].astype("datetime64[ns]").to_numpy(dtype="int64")
-        )
+        app_times_all = df["order_approved_at"].astype("datetime64[ns]").to_numpy(dtype="int64")
         has_app_all = df["order_approved_at"].notna().to_numpy()
         global_priors = np.full(n_rows, 0.08, dtype="float64")
         if len(sorted_deliv_times) > 0:
-            idx_right = np.searchsorted(
-                sorted_deliv_times, app_times_all[has_app_all], side="right"
-            )
+            idx_right = np.searchsorted(sorted_deliv_times, app_times_all[has_app_all], side="right")
             priors_valid = np.where(
                 idx_right >= 20,
                 cum_deliv_late[np.maximum(idx_right - 1, 0)] / np.maximum(idx_right, 1),
@@ -141,14 +103,8 @@ def compute_seller_rolling_30d_features(
     valid_indices = np.flatnonzero(valid_seller_app.to_numpy())
 
     app_ns = df["order_approved_at"].astype("datetime64[ns]").to_numpy(dtype="int64")
-    deliv_ns = (
-        df["order_delivered_customer_date"]
-        .astype("datetime64[ns]")
-        .to_numpy(dtype="int64")
-    )
-    has_deliv = (
-        df["is_eligible_mature"].eq(1) & df["order_delivered_customer_date"].notna()
-    ).to_numpy()
+    deliv_ns = df["order_delivered_customer_date"].astype("datetime64[ns]").to_numpy(dtype="int64")
+    has_deliv = (df["is_eligible_mature"].eq(1) & df["order_delivered_customer_date"].notna()).to_numpy()
     y_days_arr = df["y_days"].to_numpy(dtype="float64")
     y_late_arr = df["y_late"].fillna(0.0).to_numpy(dtype="int64")
 
@@ -205,13 +161,11 @@ def compute_seller_rolling_30d_features(
                 late_counts[row_i] = n_late
                 is_cold = 1 if n_mature < min_mature_orders else 0
                 cold_start_flags[row_i] = is_cold
-                smoothed_late_rates[row_i] = (
-                    float(n_late) + prior_weight_m * prior_p
-                ) / (float(n_mature) + prior_weight_m)
+                smoothed_late_rates[row_i] = (float(n_late) + prior_weight_m * prior_p) / (
+                    float(n_mature) + prior_weight_m
+                )
                 if n_mature >= min_mature_orders:
-                    median_etas[row_i] = float(
-                        np.median(s_y_days[left:right][mature_in_win])
-                    )
+                    median_etas[row_i] = float(np.median(s_y_days[left:right][mature_in_win]))
                 else:
                     median_etas[row_i] = np.nan
 
@@ -221,12 +175,9 @@ def compute_seller_rolling_30d_features(
     df["seller_cold_start_flag"] = cold_start_flags
     df["seller_late_rate_30d_smoothed"] = smoothed_late_rates
     df["seller_median_eta_days_30d"] = median_etas
-    df["approval_dow"] = (
-        df["order_approved_at"].dt.day_of_week.fillna(-1).astype("int64")
-    )
-    df["approval_month"] = (
-        df["order_approved_at"].dt.month.fillna(-1).astype("int64")
-    )
+    df["approval_dow"] = df["order_approved_at"].dt.day_of_week.fillna(-1).astype("int64")
+    df["approval_month"] = df["order_approved_at"].dt.month.fillna(-1).astype("int64")
+    df.index = original_index
     return df
 
 
@@ -241,9 +192,7 @@ def assign_chronological_splits_with_maturity_purge(
     val_prop = float(props["val_calibration"])
 
     eligible_mask = out["eligibility_code"].eq("ELIGIBLE_MATURE")
-    eligible = out.loc[eligible_mask].sort_values(
-        ["order_approved_at", "order_id"], ascending=[True, True]
-    )
+    eligible = out.loc[eligible_mask].sort_values(["order_approved_at", "order_id"], ascending=[True, True])
     n_elig = len(eligible)
     if n_elig == 0:
         raise ValueError("Cannot construct chronological splits: 0 ELIGIBLE_MATURE orders")
@@ -270,17 +219,11 @@ def assign_chronological_splits_with_maturity_purge(
     # Apply O4 label-maturity rule at split boundaries:
     # A split ending at T_split may only consume labels where order_delivered_customer_date <= T_split.
     out["split_role"] = "EXCLUDED"
-    train_mature = train_idx[
-        out.loc[train_idx, "order_delivered_customer_date"] <= t_train_end
-    ]
-    train_immature = train_idx[
-        out.loc[train_idx, "order_delivered_customer_date"] > t_train_end
-    ]
+    train_mature = train_idx[out.loc[train_idx, "order_delivered_customer_date"] <= t_train_end]
+    train_immature = train_idx[out.loc[train_idx, "order_delivered_customer_date"] > t_train_end]
 
     val_mature = val_idx[out.loc[val_idx, "order_delivered_customer_date"] <= t_val_end]
-    val_immature = val_idx[
-        out.loc[val_idx, "order_delivered_customer_date"] > t_val_end
-    ]
+    val_immature = val_idx[out.loc[val_idx, "order_delivered_customer_date"] > t_val_end]
 
     out.loc[train_mature, "split_role"] = "train"
     out.loc[train_immature, "split_role"] = "EXCL_IMMATURE_AT_TRAIN_BOUNDARY"
@@ -300,9 +243,7 @@ def assign_chronological_splits_with_maturity_purge(
     )
 
     # Also compute O3 end-of-day (+23:59:59) late-label sensitivity diagnostic on eligible orders
-    eod_deadline = out["order_estimated_delivery_date"] + pd.Timedelta(
-        hours=23, minutes=59, seconds=59
-    )
+    eod_deadline = out["order_estimated_delivery_date"] + pd.Timedelta(hours=23, minutes=59, seconds=59)
     late_eod = (out["order_delivered_customer_date"] > eod_deadline).astype("float64")
 
     split_summary = {
@@ -310,9 +251,7 @@ def assign_chronological_splits_with_maturity_purge(
         "contract_version": contract.contract_version,
         "ordering_timestamp": "order_approved_at",
         "boundaries": {
-            "train_min_approved_at": str(
-                eligible.loc[train_idx, "order_approved_at"].min()
-            ),
+            "train_min_approved_at": str(eligible.loc[train_idx, "order_approved_at"].min()),
             "T_train_end": str(t_train_end),
             "T_val_end": str(t_val_end),
             "T_test_end": str(t_test_end),
@@ -330,31 +269,21 @@ def assign_chronological_splits_with_maturity_purge(
             "holdout_test_orders": int(len(test_idx)),
         },
         "target_rates_by_split": {
-            "train_mean_y_days": round(
-                float(out.loc[train_mature, "y_days"].mean()), 4
-            ),
+            "train_mean_y_days": round(float(out.loc[train_mature, "y_days"].mean()), 4),
             "train_late_rate": round(float(out.loc[train_mature, "y_late"].mean()), 4),
-            "val_calibration_mean_y_days": round(
-                float(out.loc[val_mature, "y_days"].mean()), 4
-            ),
-            "val_calibration_late_rate": round(
-                float(out.loc[val_mature, "y_late"].mean()), 4
-            ),
-            "holdout_test_mean_y_days": round(
-                float(out.loc[test_idx, "y_days"].mean()), 4
-            ),
-            "holdout_test_late_rate": round(
-                float(out.loc[test_idx, "y_late"].mean()), 4
-            ),
+            "val_calibration_mean_y_days": round(float(out.loc[val_mature, "y_days"].mean()), 4),
+            "val_calibration_late_rate": round(float(out.loc[val_mature, "y_late"].mean()), 4),
+            "holdout_test_mean_y_days": round(float(out.loc[test_idx, "y_days"].mean()), 4),
+            "holdout_test_late_rate": round(float(out.loc[test_idx, "y_late"].mean()), 4),
         },
         "deadline_comparison_sensitivity": {
-            "exact_timestamp_late_rate_eligible": round(
-                float(out.loc[eligible_mask, "y_late"].mean()), 4
-            ),
-            "end_of_day_235959_late_rate_eligible": round(
-                float(late_eod.loc[eligible_mask].mean()), 4
-            ),
+            "exact_timestamp_late_rate_eligible": round(float(out.loc[eligible_mask, "y_late"].mean()), 4),
+            "end_of_day_235959_late_rate_eligible": round(float(late_eod.loc[eligible_mask].mean()), 4),
         },
+    }
+    split_summary["target_rates_by_split"] = {
+        key: value if np.isfinite(value) else None
+        for key, value in split_summary["target_rates_by_split"].items()
     }
     return out, split_summary
 
@@ -376,9 +305,7 @@ def assert_approval_time_feature_safety(
 
     train_rows = df.loc[df["split_role"] == "train"]
     if (train_rows["order_delivered_customer_date"] > t_train_end).any():
-        raise ValueError(
-            "Leakage gate violation: train split contains orders delivered after T_train_end"
-        )
+        raise ValueError("Leakage gate violation: train split contains orders delivered after T_train_end")
 
     val_rows = df.loc[df["split_role"] == "val_calibration"]
     if (val_rows["order_delivered_customer_date"] > t_val_end).any():
@@ -391,58 +318,27 @@ def assert_approval_time_feature_safety(
 
     test_rows = df.loc[df["split_role"] == "holdout_test"]
     if (val_rows["order_approved_at"] > test_rows["order_approved_at"].min()).any():
-        raise ValueError(
-            "Chronological ordering violation between val_calibration and holdout_test"
-        )
+        raise ValueError("Chronological ordering violation between val_calibration and holdout_test")
 
 
 def evaluate_non_learned_baselines(df: pd.DataFrame) -> dict[str, Any]:
     """Compute O6 non-learned arithmetic/empirical baselines (`B0`, `B1`) strictly from `train` statistics."""
     train = df.loc[df["split_role"] == "train"].copy()
     val = df.loc[df["split_role"] == "val_calibration"].copy()
+    if val.empty:
+        return {
+            "evaluated_split": "val_calibration",
+            "status": "NOT_ESTIMABLE",
+            "reason": "No mature validation labels remain after the declared purge",
+        }
 
-    global_p10 = float(np.percentile(train["y_days"], 10))
-    global_p50 = float(np.percentile(train["y_days"], 50))
-    global_p90 = float(np.percentile(train["y_days"], 90))
-    global_late_rate = float(train["y_late"].mean())
+    from waymark.evaluation import baseline_predictions
 
-    # Corridor empirical quantiles and smoothed late rates from train only (fallback when group < 20)
-    corridor_stats = (
-        train.groupby("state_corridor", as_index=False)
-        .agg(
-            n_train=("y_days", "count"),
-            p10=("y_days", lambda s: float(np.percentile(s, 10))),
-            p50=("y_days", lambda s: float(np.percentile(s, 50))),
-            p90=("y_days", lambda s: float(np.percentile(s, 90))),
-            late_sum=("y_late", "sum"),
-        )
-    )
-    corridor_stats["b1_p10"] = np.where(
-        corridor_stats["n_train"] >= 20, corridor_stats["p10"], global_p10
-    )
-    corridor_stats["b1_p50"] = np.where(
-        corridor_stats["n_train"] >= 20, corridor_stats["p50"], global_p50
-    )
-    corridor_stats["b1_p90"] = np.where(
-        corridor_stats["n_train"] >= 20, corridor_stats["p90"], global_p90
-    )
-    corridor_stats["b0_corridor_late_rate"] = (
-        corridor_stats["late_sum"] + 5.0 * global_late_rate
-    ) / (corridor_stats["n_train"] + 5.0)
-
-    val_eval = val.merge(
-        corridor_stats[
-            ["state_corridor", "b1_p10", "b1_p50", "b1_p90", "b0_corridor_late_rate"]
-        ],
-        on="state_corridor",
-        how="left",
-    )
-    val_eval["b1_p10"] = val_eval["b1_p10"].fillna(global_p10)
-    val_eval["b1_p50"] = val_eval["b1_p50"].fillna(global_p50)
-    val_eval["b1_p90"] = val_eval["b1_p90"].fillna(global_p90)
-    val_eval["b0_corridor_late_rate"] = val_eval["b0_corridor_late_rate"].fillna(
-        global_late_rate
-    )
+    val_eval = val.copy()
+    references = baseline_predictions(train, val)
+    for name in ["b1_p10", "b1_p50", "b1_p90"]:
+        val_eval[name] = references[name]
+    val_eval["b0_corridor_late_rate"] = references["b0_late_prob"]
 
     y_val = val_eval["y_days"].to_numpy(dtype="float64")
     b0_mae = float(np.mean(np.abs(y_val - val_eval["promised_days"].to_numpy(dtype="float64"))))
@@ -454,10 +350,7 @@ def evaluate_non_learned_baselines(df: pd.DataFrame) -> dict[str, Any]:
         )
     )
     b1_width80 = float(
-        np.mean(
-            val_eval["b1_p90"].to_numpy(dtype="float64")
-            - val_eval["b1_p10"].to_numpy(dtype="float64")
-        )
+        np.mean(val_eval["b1_p90"].to_numpy(dtype="float64") - val_eval["b1_p10"].to_numpy(dtype="float64"))
     )
     b0_risk_brier = float(
         np.mean(
@@ -497,6 +390,9 @@ def build_t5_features_and_splits(
 ) -> dict[str, Any]:
     """Execute T5 feature generation, leakage verification, and split manifest export (closing WM2)."""
     features_dir.mkdir(parents=True, exist_ok=True)
+    require_new_outputs(
+        features_dir, ["order_features_and_splits.parquet", "t5_split_and_feature_manifest.json"]
+    )
     fact = pd.read_parquet(gold_dir / "fact_order_fulfillment.parquet")
 
     seller_cfg = contract.o5_features_and_numerics["seller_rolling_history"]
@@ -512,14 +408,12 @@ def build_t5_features_and_splits(
         fixed_global_prior_late_rate=fixed_global_prior_late_rate,
     )
 
-    split_df, split_summary = assign_chronological_splits_with_maturity_purge(
-        feat_df, contract
-    )
+    split_df, split_summary = assign_chronological_splits_with_maturity_purge(feat_df, contract)
     assert_approval_time_feature_safety(split_df, FEATURE_COLUMNS, split_summary)
 
     # Export full feature+label+split table and clean model-ready development/holdout Parquet files
     full_pq = features_dir / "order_features_and_splits.parquet"
-    split_df.to_parquet(full_pq, index=False)
+    write_parquet_immutable(split_df, full_pq)
 
     hasher = hashlib.sha256()
     hasher.update(full_pq.read_bytes())
@@ -541,7 +435,8 @@ def build_t5_features_and_splits(
         "split_summary": split_summary,
         "non_learned_baselines_val_preview": baselines_val,
     }
-    (features_dir / "t5_split_and_feature_manifest.json").write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    write_immutable(
+        features_dir / "t5_split_and_feature_manifest.json",
+        (json.dumps(manifest, indent=2, allow_nan=False) + "\n").encode(),
     )
     return manifest

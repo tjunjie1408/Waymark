@@ -10,6 +10,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
+from waymark.artifacts import require_new_outputs, write_immutable, write_parquet_immutable
 from waymark.contracts import WM0Contract
 
 
@@ -26,12 +27,7 @@ def _vectorized_haversine_km(
     lat2_arr = np.asarray(lat2, dtype="float64")
     lng2_arr = np.asarray(lng2, dtype="float64")
 
-    valid = (
-        ~np.isnan(lat1_arr)
-        & ~np.isnan(lng1_arr)
-        & ~np.isnan(lat2_arr)
-        & ~np.isnan(lng2_arr)
-    )
+    valid = ~np.isnan(lat1_arr) & ~np.isnan(lng1_arr) & ~np.isnan(lat2_arr) & ~np.isnan(lng2_arr)
     out = np.full(lat1_arr.shape, np.nan, dtype="float64")
     if not np.any(valid):
         return out
@@ -41,10 +37,7 @@ def _vectorized_haversine_km(
     dphi = np.radians(lat2_arr[valid] - lat1_arr[valid])
     dlambda = np.radians(lng2_arr[valid] - lng1_arr[valid])
 
-    a = (
-        np.sin(dphi / 2.0) ** 2
-        + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2.0) ** 2
-    )
+    a = np.sin(dphi / 2.0) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2.0) ** 2
     a = np.clip(a, 0.0, 1.0)
     out[valid] = 2.0 * radius_km * np.arcsin(np.sqrt(a))
     return out
@@ -57,6 +50,17 @@ def build_gold_analytical_model(
 ) -> dict[str, Any]:
     """Build Gold `fact_order_fulfillment` and dimensions from Silver Parquet, enforcing O2 invariants."""
     gold_dir.mkdir(parents=True, exist_ok=True)
+    require_new_outputs(
+        gold_dir,
+        [
+            "fact_order_fulfillment.parquet",
+            "dim_seller.parquet",
+            "dim_customer.parquet",
+            "dim_product.parquet",
+            "dim_geolocation_zip.parquet",
+            "gold_reconciliation.json",
+        ],
+    )
     earth_radius_km = float(contract.o5_features_and_numerics["earth_radius_km"])
 
     orders = pd.read_parquet(silver_dir / "silver_orders.parquet")
@@ -96,16 +100,11 @@ def build_gold_analytical_model(
         on="seller_id",
         how="left",
     )
-    items_enriched["item_total_brl"] = (
-        items_enriched["price"] + items_enriched["freight_value"]
-    )
+    items_enriched["item_total_brl"] = items_enriched["price"] + items_enriched["freight_value"]
     items_enriched["weight_missing_flag"] = (
-        items_enriched["product_weight_g"].isna()
-        | (items_enriched["product_weight_g"] <= 0.0)
+        items_enriched["product_weight_g"].isna() | (items_enriched["product_weight_g"] <= 0.0)
     ).astype("int64")
-    items_enriched["dim_missing_flag"] = (
-        items_enriched["dim_missing_flag"].fillna(1).astype("int64")
-    )
+    items_enriched["dim_missing_flag"] = items_enriched["dim_missing_flag"].fillna(1).astype("int64")
 
     # Attach customer coordinates to items_enriched to compute max/mean seller haversine per order
     order_cust_coords = orders[["order_id", "customer_id"]].merge(
@@ -152,9 +151,9 @@ def build_gold_analytical_model(
             ascending=[True, False, True],
         )
     )
-    primary_sellers = seller_order_totals.drop_duplicates(
-        subset=["order_id"], keep="first"
-    )[["order_id", "seller_id"]].rename(columns={"seller_id": "primary_seller_id"})
+    primary_sellers = seller_order_totals.drop_duplicates(subset=["order_id"], keep="first")[
+        ["order_id", "seller_id"]
+    ].rename(columns={"seller_id": "primary_seller_id"})
 
     # Select primary_product_id and primary_product_category_name_english:
     # MAX(item_total_brl), tie-break MIN(order_item_id)
@@ -192,11 +191,9 @@ def build_gold_analytical_model(
             ascending=[True, False, True],
         )
     )
-    primary_payment_types = payment_type_totals.drop_duplicates(
-        subset=["order_id"], keep="first"
-    )[["order_id", "payment_type"]].rename(
-        columns={"payment_type": "primary_payment_type"}
-    )
+    primary_payment_types = payment_type_totals.drop_duplicates(subset=["order_id"], keep="first")[
+        ["order_id", "payment_type"]
+    ].rename(columns={"payment_type": "primary_payment_type"})
     payment_agg = payment_agg.merge(primary_payment_types, on="order_id", how="left")
 
     # 4. Aggregate reviews (diagnostic/post-hoc only, never feature/target)
@@ -245,16 +242,10 @@ def build_gold_analytical_model(
 
     # Fill zero-counts for orders without items, payments, or reviews
     fact["item_count"] = fact["item_count"].fillna(0).astype("int64")
-    fact["distinct_seller_count"] = (
-        fact["distinct_seller_count"].fillna(0).astype("int64")
-    )
-    fact["distinct_product_count"] = (
-        fact["distinct_product_count"].fillna(0).astype("int64")
-    )
+    fact["distinct_seller_count"] = fact["distinct_seller_count"].fillna(0).astype("int64")
+    fact["distinct_product_count"] = fact["distinct_product_count"].fillna(0).astype("int64")
     fact["is_multi_seller"] = fact["distinct_seller_count"] > 1
-    fact["total_item_price_brl"] = (
-        fact["total_item_price_brl"].fillna(0.0).astype("float64")
-    )
+    fact["total_item_price_brl"] = fact["total_item_price_brl"].fillna(0.0).astype("float64")
     fact["total_freight_brl"] = fact["total_freight_brl"].fillna(0.0).astype("float64")
     fact["freight_to_price_ratio"] = np.where(
         fact["total_item_price_brl"] > 0.0,
@@ -263,11 +254,9 @@ def build_gold_analytical_model(
     ).astype("float64")
 
     # Apply O2 invalid_dimension_policy: set volume and density to NULL when dim_missing_flag == 1
-    fact["dim_missing_flag"] = (
-        np.where(fact["item_count"] == 0, 1, fact["dim_missing_flag"].fillna(1)).astype(
-            "int64"
-        )
-    )
+    fact["dim_missing_flag"] = np.where(
+        fact["item_count"] == 0, 1, fact["dim_missing_flag"].fillna(1)
+    ).astype("int64")
     fact["total_weight_g"] = np.where(
         (fact["item_count"] == 0) | (fact["any_weight_missing"].fillna(1) == 1),
         np.nan,
@@ -286,30 +275,18 @@ def build_gold_analytical_model(
         np.nan,
         fact["total_weight_g"] / fact["total_volume_cm3"],
     ).astype("float64")
-    fact = fact.drop(
-        columns=["raw_total_weight_g", "raw_total_volume_cm3", "any_weight_missing"]
-    )
+    fact = fact.drop(columns=["raw_total_weight_g", "raw_total_volume_cm3", "any_weight_missing"])
 
     fact["payment_row_count"] = fact["payment_row_count"].fillna(0).astype("int64")
-    fact["total_payment_value_brl"] = (
-        fact["total_payment_value_brl"].fillna(0.0).astype("float64")
-    )
-    fact["max_payment_installments"] = (
-        fact["max_payment_installments"].fillna(0).astype("int64")
-    )
+    fact["total_payment_value_brl"] = fact["total_payment_value_brl"].fillna(0.0).astype("float64")
+    fact["max_payment_installments"] = fact["max_payment_installments"].fillna(0).astype("int64")
     fact["review_count"] = fact["review_count"].fillna(0).astype("int64")
 
     # Geography & Haversine distance for primary seller -> customer
-    fact["primary_seller_geo_missing_flag"] = (
-        fact["primary_seller_lat"].isna().astype("int64")
-    )
+    fact["primary_seller_geo_missing_flag"] = fact["primary_seller_lat"].isna().astype("int64")
     fact["geo_missing_flag"] = (
-        (
-            (fact["customer_geo_missing_flag"] == 1)
-            | (fact["primary_seller_geo_missing_flag"] == 1)
-        )
-        .astype("int64")
-    )
+        (fact["customer_geo_missing_flag"] == 1) | (fact["primary_seller_geo_missing_flag"] == 1)
+    ).astype("int64")
     fact["is_interstate"] = np.where(
         fact["primary_seller_state"].notna() & fact["customer_state"].notna(),
         (fact["primary_seller_state"] != fact["customer_state"]).astype("int64"),
@@ -317,9 +294,7 @@ def build_gold_analytical_model(
     ).astype("int64")
     fact["state_corridor"] = np.where(
         fact["primary_seller_state"].notna() & fact["customer_state"].notna(),
-        fact["primary_seller_state"].astype(str)
-        + "->"
-        + fact["customer_state"].astype(str),
+        fact["primary_seller_state"].astype(str) + "->" + fact["customer_state"].astype(str),
         "UNKNOWN",
     )
     fact["primary_seller_haversine_km"] = _vectorized_haversine_km(
@@ -374,12 +349,17 @@ def build_gold_analytical_model(
             f"O2 payment reconciliation failed: Silver={silver_payment_sum}, Gold={gold_payment_sum}"
         )
 
+    if int(fact["item_count"].sum()) != len(items):
+        raise ValueError("O2 item count reconciliation failed: orphan or duplicated items")
+    if int(fact["payment_row_count"].sum()) != len(payments):
+        raise ValueError("O2 payment count reconciliation failed: orphan or duplicated payments")
+
     # 7. Write Gold fact and dimension Parquet tables
-    fact.to_parquet(gold_dir / "fact_order_fulfillment.parquet", index=False)
-    sellers.to_parquet(gold_dir / "dim_seller.parquet", index=False)
-    customers.to_parquet(gold_dir / "dim_customer.parquet", index=False)
-    products.to_parquet(gold_dir / "dim_product.parquet", index=False)
-    geo_zip.to_parquet(gold_dir / "dim_geolocation_zip.parquet", index=False)
+    write_parquet_immutable(fact, gold_dir / "fact_order_fulfillment.parquet")
+    write_parquet_immutable(sellers, gold_dir / "dim_seller.parquet")
+    write_parquet_immutable(customers, gold_dir / "dim_customer.parquet")
+    write_parquet_immutable(products, gold_dir / "dim_product.parquet")
+    write_parquet_immutable(geo_zip, gold_dir / "dim_geolocation_zip.parquet")
 
     reconciliation = {
         "contract_id": contract.contract_id,
@@ -423,8 +403,8 @@ def build_gold_analytical_model(
         },
     }
 
-    (gold_dir / "gold_reconciliation.json").write_text(
-        json.dumps(reconciliation, indent=2) + "\n", encoding="utf-8"
+    write_immutable(
+        gold_dir / "gold_reconciliation.json", (json.dumps(reconciliation, indent=2) + "\n").encode()
     )
     return reconciliation
 
@@ -569,9 +549,11 @@ def verify_duckdb_sql_equivalence(
     """
 
     sql_df = con.execute(sql_query).df()
-    gold_df = pd.read_parquet(gold_dir / "fact_order_fulfillment.parquet").sort_values(
-        "order_id"
-    ).reset_index(drop=True)
+    gold_df = (
+        pd.read_parquet(gold_dir / "fact_order_fulfillment.parquet")
+        .sort_values("order_id")
+        .reset_index(drop=True)
+    )
 
     if len(sql_df) != len(gold_df):
         raise ValueError(f"Row count mismatch: SQL={len(sql_df)}, Gold={len(gold_df)}")
@@ -618,9 +600,7 @@ def verify_duckdb_sql_equivalence(
         valid = ~s_na
         max_diff = float(np.max(np.abs(s_num[valid] - g_num[valid]))) if np.any(valid) else 0.0
         if max_diff > tolerance:
-            raise ValueError(
-                f"Float tolerance exceeded on '{col}': max_diff={max_diff} > {tolerance}"
-            )
+            raise ValueError(f"Float tolerance exceeded on '{col}': max_diff={max_diff} > {tolerance}")
         max_abs_diffs[col] = max_diff
 
     # Also run an analytical reference query over eligible orders by top 5 state corridors
@@ -650,7 +630,5 @@ def verify_duckdb_sql_equivalence(
         "tolerance": tolerance,
         "top_5_corridors_reference_query": top_corridors,
     }
-    (gold_dir / "duckdb_sql_parity.json").write_text(
-        json.dumps(result, indent=2) + "\n", encoding="utf-8"
-    )
+    write_immutable(gold_dir / "duckdb_sql_parity.json", (json.dumps(result, indent=2) + "\n").encode())
     return result
