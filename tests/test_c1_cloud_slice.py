@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from waymark.cloud_slice import pyarrow_schema_to_athena_ddl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -12,8 +15,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def test_type_map_and_ddl_generation(tmp_path: Path) -> None:
     """Verify pyarrow schema converter emits compliant Athena DDL without backticks."""
-    silver_orders_path = REPO_ROOT / "data" / "silver" / "silver_orders.parquet"
-    assert silver_orders_path.exists(), "silver_orders.parquet must exist"
+    silver_orders_path = tmp_path / "silver_orders.parquet"
+    pq.write_table(
+        pa.table({"order_id": ["synthetic"], "is_eligible_mature": [1], "delivery_duration_days": [2.0]}),
+        silver_orders_path,
+    )
 
     ddl = pyarrow_schema_to_athena_ddl(
         table_name="silver_orders",

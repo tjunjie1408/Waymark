@@ -1,77 +1,76 @@
-"""AWS Glue Python Shell entrypoint (0.0625 DPU) for Medallion Lake verification.
-
-Enforces S3 object presence, validates manifests, and registers catalog metadata
-for Waymark pilot bounded batch fulfillment architecture in ap-southeast-2.
-Compatible with Python 3.9 Glue runtime.
-"""
+"""Independent hash/inventory verification for a prepared lake snapshot (Glue Python 3.9)."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
+from uuid import uuid4
 
 import boto3
 
 
+def verify_snapshot(s3, bucket: str, key: str, expected_sha256: str) -> dict:
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+    if hashlib.sha256(body).hexdigest() != expected_sha256:
+        raise ValueError("Snapshot manifest hash mismatch")
+    manifest = json.loads(body)
+    identity = manifest.pop("snapshot_id")
+    canonical = (json.dumps(manifest, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
+    if hashlib.sha256(canonical).hexdigest() != identity or key != f"snapshots/{identity}/manifest.json":
+        raise ValueError("Snapshot identity/path mismatch")
+    objects = manifest["objects"]
+    paths = [obj["path"] for obj in objects]
+    if len(paths) != len(set(paths)):
+        raise ValueError("Duplicate snapshot paths")
+    for layer, count in [("bronze", 9), ("silver", 9), ("gold", 6), ("manifests", 5), ("scripts", 1)]:
+        if sum(path.startswith(layer + "/") for path in paths) != count:
+            raise ValueError(f"Missing required {layer} inventory")
+    if len(paths) != 30:
+        raise ValueError("Unexpected snapshot inventory")
+    for obj in objects:
+        path = PurePosixPath(obj["path"])
+        if path.is_absolute() or ".." in path.parts or chr(92) in str(path):
+            raise ValueError("Unsafe snapshot path")
+        response = s3.get_object(Bucket=bucket, Key=f"snapshots/{identity}/{path}")
+        digest = hashlib.sha256()
+        length = 0
+        while True:
+            chunk = response["Body"].read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            length += len(chunk)
+        if length != obj["size_bytes"] or digest.hexdigest() != obj["sha256"]:
+            raise ValueError(f"Snapshot object mismatch: {path}")
+    return {"snapshot_id": identity, "verified_objects": len(paths)}
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Glue Python Shell Medallion Verification")
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--JOB_NAME", default="waymark-pilot-medallion-pythonshell")
     parser.add_argument("--WAYMARK_LAKE_BUCKET", required=True)
     parser.add_argument("--WAYMARK_GLUE_DB", required=True)
-    parser.add_argument("--TempDir", default="")
-
+    parser.add_argument("--WAYMARK_SNAPSHOT_KEY", required=True)
+    parser.add_argument("--WAYMARK_SNAPSHOT_SHA256", required=True)
     args, _ = parser.parse_known_args()
-    bucket_name = args.WAYMARK_LAKE_BUCKET
-    db_name = args.WAYMARK_GLUE_DB
-    job_name = args.JOB_NAME
-
-    print(f"Starting Glue Python Shell Job: {job_name}")
-    print(f"Target Bucket: {bucket_name}, Target Database: {db_name}")
-
-    s3_client = boto3.client("s3")
-    glue_client = boto3.client("glue")
-
-    # 1. Inspect S3 Lake prefixes
-    expected_prefixes = ["bronze/", "silver/", "gold/"]
-    prefix_summary = {}
-
-    for prefix in expected_prefixes:
-        resp = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix, MaxKeys=100)
-        key_count = resp.get("KeyCount", 0)
-        contents = [item["Key"] for item in resp.get("Contents", [])]
-        prefix_summary[prefix] = {
-            "key_count": key_count,
-            "sample_keys": contents[:5],
-        }
-        print(f"Prefix '{prefix}': found {key_count} objects.")
-
-    # 2. Check Database existence in Glue Catalog
-    db_resp = glue_client.get_database(Name=db_name)
-    catalog_db_name = db_resp["Database"]["Name"]
-    print(f"Verified Glue Catalog Database: {catalog_db_name}")
-
-    # 3. Write Glue execution audit record to S3 (Python 3.9 uses timezone.utc)
-    now_utc = datetime.now(timezone.utc).isoformat()  # noqa: UP017
-    audit_payload = {
-        "job_name": job_name,
-        "execution_timestamp_utc": now_utc,
-        "bucket_name": bucket_name,
-        "database_name": catalog_db_name,
-        "prefix_summary": prefix_summary,
-        "status": "SUCCEEDED",
-        "dpu_allocated": 0.0625,
-    }
-
-    audit_timestamp = int(datetime.now(timezone.utc).timestamp())  # noqa: UP017
-    audit_key = f"staging/glue_audit/run_{audit_timestamp}.json"
-    s3_client.put_object(
-        Bucket=bucket_name,
+    s3 = boto3.client("s3")
+    boto3.client("glue").get_database(Name=args.WAYMARK_GLUE_DB)
+    result = verify_snapshot(
+        s3, args.WAYMARK_LAKE_BUCKET, args.WAYMARK_SNAPSHOT_KEY, args.WAYMARK_SNAPSHOT_SHA256
+    )
+    now = datetime.now(timezone.utc).isoformat()  # noqa: UP017
+    result.update(status="SUCCEEDED", job_name=args.JOB_NAME, execution_timestamp_utc=now)
+    audit_key = f"snapshots/{result['snapshot_id']}/glue_audits/{uuid4().hex}.json"
+    s3.put_object(
+        Bucket=args.WAYMARK_LAKE_BUCKET,
         Key=audit_key,
-        Body=json.dumps(audit_payload, indent=2).encode("utf-8"),
+        Body=json.dumps(result, indent=2).encode(),
         ContentType="application/json",
     )
-    print(f"Glue Python Shell job completed successfully. Audit saved to s3://{bucket_name}/{audit_key}")
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

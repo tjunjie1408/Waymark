@@ -8,12 +8,19 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import re
 import time
 from pathlib import Path
 from typing import Any
 
 import boto3
 import pyarrow.parquet as pq
+
+from waymark.artifacts import canonical_json, write_immutable
+from waymark.contracts import load_wm0_contract
+from waymark.costs import athena_billable_bytes, usage_estimate
+from waymark.snapshots import build_lake_snapshot, upload_snapshot, verify_account, verify_remote_snapshot
 
 logger = logging.getLogger("waymark.cloud_slice")
 
@@ -29,11 +36,17 @@ TYPE_MAP = {
 
 def pyarrow_schema_to_athena_ddl(table_name: str, parquet_path: Path, s3_location: str) -> str:
     """Generate Athena CREATE EXTERNAL TABLE DDL from Parquet schema."""
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", table_name):
+        raise ValueError("Unsafe table identifier")
+    if not s3_location.startswith("s3://") or "'" in s3_location:
+        raise ValueError("Invalid S3 location")
     schema = pq.read_schema(parquet_path)
     col_defs = []
     for field in schema:
         t_str = str(field.type)
-        sql_type = TYPE_MAP.get(t_str, "STRING")
+        if t_str not in TYPE_MAP or not re.fullmatch(r"[a-z_][a-z0-9_]*", field.name):
+            raise ValueError(f"Unsupported Athena field: {field}")
+        sql_type = TYPE_MAP[t_str]
         col_defs.append(f"  {field.name} {sql_type}")
     cols_joined = ",\n".join(col_defs)
     return (
@@ -54,6 +67,8 @@ class AthenaQueryRunner:
         self.workgroup = workgroup
         self.database = database
         self.total_bytes_scanned = 0
+        self.query_statistics: list[dict[str, Any]] = []
+        self.timeout_seconds = 300.0
 
     def run_query(self, query: str) -> tuple[list[dict[str, Any]], int]:
         """Execute query, wait for completion, and return rows as dictionaries."""
@@ -64,6 +79,7 @@ class AthenaQueryRunner:
         )
         query_id = response["QueryExecutionId"]
 
+        deadline = time.monotonic() + self.timeout_seconds
         while True:
             status_resp = self.client.get_query_execution(QueryExecutionId=query_id)
             state = status_resp["QueryExecution"]["Status"]["State"]
@@ -71,13 +87,26 @@ class AthenaQueryRunner:
                 stats = status_resp["QueryExecution"]["Statistics"]
                 bytes_scanned = stats.get("DataScannedInBytes", 0)
                 self.total_bytes_scanned += bytes_scanned
+                statement_type = status_resp["QueryExecution"].get("StatementType", "DML")
+                self.query_statistics.append(
+                    {
+                        "query_id": query_id,
+                        "statement_type": statement_type,
+                        "status": state,
+                        "scanned_bytes": bytes_scanned,
+                        "billable_bytes": athena_billable_bytes(bytes_scanned, statement_type),
+                    }
+                )
                 break
             elif state in ("FAILED", "CANCELLED"):
-                reason = status_resp["QueryExecution"]["Status"].get(
-                    "StateChangeReason", "Unknown error"
-                )
+                reason = status_resp["QueryExecution"]["Status"].get("StateChangeReason", "Unknown error")
                 msg = f"Athena query {query_id} failed with state {state}: {reason}\nQuery: {query}"
                 raise RuntimeError(msg)
+            if state not in {"QUEUED", "RUNNING"}:
+                raise RuntimeError(f"Unknown Athena query state {state}: {query_id}")
+            if time.monotonic() >= deadline:
+                self.client.stop_query_execution(QueryExecutionId=query_id)
+                raise TimeoutError(f"Athena polling deadline exceeded: {query_id}")
             time.sleep(1)
 
         # Fetch results
@@ -104,80 +133,56 @@ class AthenaQueryRunner:
         return rows, bytes_scanned
 
 
-def sync_local_lake_to_s3(
-    s3_client: Any,
-    bucket_name: str,
-    repo_root: Path,
-) -> dict[str, int]:
-    """Upload Bronze, Silver, Gold parquet files and manifests to S3 with partitioned prefixes."""
-    uploaded_counts: dict[str, int] = {"scripts": 0, "silver": 0, "gold": 0, "manifests": 0}
-
-    # 1. Upload Glue script
-    glue_script = repo_root / "scripts" / "glue_etl_entry.py"
-    if glue_script.exists():
-        s3_client.upload_file(str(glue_script), bucket_name, "scripts/glue_etl_entry.py")
-        uploaded_counts["scripts"] += 1
-
-    # 2. Upload Silver tables
-    silver_dir = repo_root / "data" / "silver"
-    for p in silver_dir.glob("*.parquet"):
-        table_name = p.stem
-        s3_key = f"silver/{table_name}/{p.name}"
-        s3_client.upload_file(str(p), bucket_name, s3_key)
-        uploaded_counts["silver"] += 1
-
-    # 3. Upload Gold tables
-    gold_dir = repo_root / "data" / "gold"
-    for p in gold_dir.glob("*.parquet"):
-        table_name = p.stem
-        s3_key = f"gold/{table_name}/{p.name}"
-        s3_client.upload_file(str(p), bucket_name, s3_key)
-        uploaded_counts["gold"] += 1
-
-    # 4. Upload configs / manifests
-    configs_dir = repo_root / "configs"
-    for manifest_name in [
-        "wm0_contract.yaml",
-        "t1_discriminating_fixture.json",
-        "t3_source_manifest.json",
-        "t4_gold_reconciliation.json",
-        "t5_wm2_split_manifest.json",
-    ]:
-        m_path = configs_dir / manifest_name
-        if m_path.exists():
-            s3_client.upload_file(str(m_path), bucket_name, f"manifests/{manifest_name}")
-            uploaded_counts["manifests"] += 1
-
-    return uploaded_counts
+def sync_local_lake_to_s3(s3_client: Any, bucket_name: str, repo_root: Path) -> dict[str, Any]:
+    """Transfer an exact content-addressed snapshot, never replace the legacy lake."""
+    snapshot = build_lake_snapshot(repo_root)
+    transport = upload_snapshot(s3_client, bucket_name, repo_root, snapshot)
+    verify_remote_snapshot(s3_client, bucket_name, snapshot)
+    return {"snapshot": snapshot, "transport": transport}
 
 
-def run_glue_job_verification(glue_client: Any, job_name: str) -> dict[str, Any]:
-    """Trigger the Glue Python Shell job and await SUCCEEDED status."""
-    run_resp = glue_client.start_job_run(JobName=job_name)
-    job_run_id = run_resp["JobRunId"]
-
-    start_time = time.time()
+def run_glue_job_verification(
+    glue_client: Any,
+    job_name: str,
+    *,
+    arguments: dict[str, str] | None = None,
+    timeout_seconds: float = 1000.0,
+    dpu_hourly_rate: float | None = None,
+    rate_source: str = "",
+) -> dict[str, Any]:
+    """Run the snapshot verifier, bounded by a client deadline and remote job timeout."""
+    response = glue_client.start_job_run(JobName=job_name, Arguments=arguments or {})
+    run_id = response["JobRunId"]
+    deadline = time.monotonic() + timeout_seconds
     while True:
-        status_resp = glue_client.get_job_run(JobName=job_name, RunId=job_run_id)
-        job_run = status_resp["JobRun"]
-        state = job_run["JobRunState"]
+        run = glue_client.get_job_run(JobName=job_name, RunId=run_id)["JobRun"]
+        state = run["JobRunState"]
         if state == "SUCCEEDED":
-            duration = job_run.get("ExecutionTime", int(time.time() - start_time))
-            dpu = job_run.get("AllocatedCapacity", 0.0625)
-            # Glue Python Shell pricing: $0.0275 per DPU-hour (0.0625 DPU)
-            cost_usd = (duration / 3600.0) * dpu * 0.44
+            duration = run.get("ExecutionTime")
+            capacity = run.get("MaxCapacity")
+            if duration is None or capacity is None or duration < 0 or capacity <= 0:
+                raise ValueError(f"Missing/invalid Glue usage for {run_id}")
+            cost = usage_estimate(
+                max(60, duration) * capacity / 3600.0,
+                "DPU_hours_60_second_minimum",
+                dpu_hourly_rate,
+                rate_source,
+            )
             return {
                 "job_name": job_name,
-                "job_run_id": job_run_id,
-                "status": "SUCCEEDED",
+                "job_run_id": run_id,
+                "status": state,
                 "execution_time_seconds": duration,
-                "allocated_dpu": dpu,
-                "estimated_cost_usd": round(cost_usd, 6),
+                "allocated_dpu": capacity,
+                "cost": cost,
+                "estimated_cost_usd": cost["estimated_cost_usd"],
             }
-        elif state in ("FAILED", "STOPPED", "TIMEOUT"):
-            error_msg = job_run.get("ErrorMessage", "Unknown Glue execution error")
-            msg = f"Glue job {job_name} run {job_run_id} failed with status {state}: {error_msg}"
-            raise RuntimeError(msg)
+        if state in {"FAILED", "STOPPED", "TIMEOUT", "ERROR", "EXPIRED"}:
+            raise RuntimeError(f"Glue {job_name}/{run_id}: {state}: {run.get('ErrorMessage', '')}")
+        if state not in {"STARTING", "RUNNING", "STOPPING", "WAITING"}:
+            raise RuntimeError(f"Unknown Glue state {state}: {run_id}")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Glue polling deadline exceeded; inspect remote run {job_name}/{run_id}")
         time.sleep(5)
 
 
@@ -185,6 +190,7 @@ def register_catalog_tables(
     runner: AthenaQueryRunner,
     bucket_name: str,
     repo_root: Path,
+    snapshot_prefix: str,
 ) -> list[str]:
     """Register all Silver and Gold external Parquet tables in Athena."""
     tables_registered: list[str] = []
@@ -193,8 +199,7 @@ def register_catalog_tables(
     silver_dir = repo_root / "data" / "silver"
     for p in sorted(silver_dir.glob("*.parquet")):
         table_name = p.stem
-        runner.run_query(f"DROP TABLE IF EXISTS {table_name}")
-        s3_loc = f"s3://{bucket_name}/silver/{table_name}/"
+        s3_loc = f"s3://{bucket_name}/{snapshot_prefix}silver/{table_name}/"
         ddl = pyarrow_schema_to_athena_ddl(table_name, p, s3_loc)
         runner.run_query(ddl)
         tables_registered.append(table_name)
@@ -202,8 +207,7 @@ def register_catalog_tables(
     gold_dir = repo_root / "data" / "gold"
     for p in sorted(gold_dir.glob("*.parquet")):
         table_name = p.stem
-        runner.run_query(f"DROP TABLE IF EXISTS {table_name}")
-        s3_loc = f"s3://{bucket_name}/gold/{table_name}/"
+        s3_loc = f"s3://{bucket_name}/{snapshot_prefix}gold/{table_name}/"
         ddl = pyarrow_schema_to_athena_ddl(table_name, p, s3_loc)
         runner.run_query(ddl)
         tables_registered.append(table_name)
@@ -291,47 +295,53 @@ def execute_athena_reconciliation(
         for r in corridor_rows
     ]
 
-    # Validate parity against T4 and T5
-    t5_counts = t5_manifest["split_summary"]["counts"]
-
-    # Verify counts
-    assert count_checks["silver_orders"] == 99441
-    assert count_checks["fact_order_fulfillment"] == 99441
-    assert count_checks["dim_customer"] == 99441
-    assert count_checks["dim_seller"] == 3095
-    assert count_checks["dim_product"] == 32951
-    assert count_checks["dim_geolocation_zip"] == 19010
-    assert count_checks["order_features_and_splits"] == 99441
-
-    # Verify monetary sums match local T4 values
-    assert abs(reconciliation_results["athena_monetary_summary"]["sum_price_brl"] - 13591643.70) < 0.1
-    assert abs(reconciliation_results["athena_monetary_summary"]["sum_freight_brl"] - 2251909.54) < 0.1
-    assert abs(reconciliation_results["athena_monetary_summary"]["sum_payment_brl"] - 16008872.12) < 0.1
-    assert reconciliation_results["athena_monetary_summary"]["sum_items"] == 112650
-
-    # Verify split counts match T5
-    assert split_summary["train"] == t5_counts["train_mature_retained"]  # 64,404
-    purged_train = t5_counts["train_purged_immature_at_boundary"]
-    assert split_summary["EXCL_IMMATURE_AT_TRAIN_BOUNDARY"] == purged_train  # 3,072
-    assert split_summary["val_calibration"] == t5_counts["val_calibration_mature_retained"]  # 12,551
-    purged_val = t5_counts["val_purged_immature_at_boundary"]
-    assert split_summary["EXCL_IMMATURE_AT_VAL_BOUNDARY"] == purged_val  # 1,908
-    assert split_summary["holdout_test"] == t5_counts["holdout_test_orders"]  # 14,460
-
-    # Verify top corridors match local T4 DuckDB parity
-    t4_corr_list = t4_summary["duckdb_sql_parity"]["top_5_corridors_reference_query"]
-    t4_corridors = {c["state_corridor"]: c for c in t4_corr_list}
-    for c in reconciliation_results["athena_top_5_corridors"]:
-        sc = c["state_corridor"]
-        expected = t4_corridors[sc]
-        assert c["eligible_orders"] == expected["eligible_orders"]
-        assert abs(c["mean_eta_days"] - expected["mean_eta_days"]) < 0.01
-        assert abs(c["mean_distance_km"] - expected["mean_distance_km"]) < 0.1
-
-    reconciliation_results["gate_wm1_status"] = "PASSED"
+    gold = t4_summary["gold_reconciliation"]
+    expected_counts = {
+        "silver_orders": gold["grain_check"]["silver_orders_count"],
+        "fact_order_fulfillment": gold["grain_check"]["gold_fact_rows"],
+        "order_features_and_splits": t5_manifest["split_summary"]["counts"]["total_orders"],
+        **{name.removesuffix("_rows"): count for name, count in gold["dimensions"].items()},
+    }
+    for name, expected in expected_counts.items():
+        if count_checks[name] != expected:
+            raise ValueError(f"row count mismatch for {name}: {count_checks[name]} != {expected}")
+    expected_money = gold["monetary_and_count_reconciliation"]
+    observed_money = reconciliation_results["athena_monetary_summary"]
+    for observed, expected in [
+        ("sum_price_brl", "gold_sum_item_price_brl"),
+        ("sum_freight_brl", "gold_sum_freight_brl"),
+        ("sum_payment_brl", "gold_sum_payment_value_brl"),
+        ("sum_items", "gold_sum_item_count"),
+    ]:
+        if not math.isclose(observed_money[observed], expected_money[expected], rel_tol=0.0, abs_tol=1e-6):
+            raise ValueError(f"{observed} reconciliation mismatch")
+    if observed_money["total_orders"] != expected_counts["fact_order_fulfillment"]:
+        raise ValueError("Monetary query order count mismatch")
+    counts = t5_manifest["split_summary"]["counts"]
+    expected_splits = {
+        "train": counts["train_mature_retained"],
+        "val_calibration": counts["val_calibration_mature_retained"],
+        "holdout_test": counts["holdout_test_orders"],
+        "EXCL_IMMATURE_AT_TRAIN_BOUNDARY": counts["train_purged_immature_at_boundary"],
+        "EXCL_IMMATURE_AT_VAL_BOUNDARY": counts["val_purged_immature_at_boundary"],
+        "EXCLUDED": counts["excluded_global_orders"],
+    }
+    if split_summary != {k: v for k, v in expected_splits.items() if v}:
+        raise ValueError("Split population mismatch")
+    reference = t4_summary["duckdb_sql_parity"]["top_5_corridors_reference_query"]
+    expected_corridors = {c["state_corridor"]: c for c in reference}
+    if {c["state_corridor"] for c in corridor_rows} != set(expected_corridors):
+        raise ValueError("Corridor inventory mismatch")
+    for observed in reconciliation_results["athena_top_5_corridors"]:
+        expected = expected_corridors[observed["state_corridor"]]
+        for key in ("eligible_orders", "mean_eta_days", "mean_distance_km"):
+            if not math.isclose(observed[key], expected[key], rel_tol=0.0, abs_tol=1e-6):
+                raise ValueError(f"Corridor {key} mismatch")
+    reconciliation_results["gate_wm1_status"] = "AGGREGATES_RECONCILED"
     reconciliation_results["total_athena_bytes_scanned"] = runner.total_bytes_scanned
-    reconciliation_results["estimated_athena_cost_usd"] = round(
-        (runner.total_bytes_scanned / (1024**4)) * 5.0, 6
+    reconciliation_results["query_statistics"] = runner.query_statistics
+    reconciliation_results["athena_cost"] = usage_estimate(
+        sum(q["billable_bytes"] for q in runner.query_statistics) / 1e12, "billable_TB", None, ""
     )
 
     return reconciliation_results
@@ -342,62 +352,136 @@ def run_c1_orchestration(
     region_name: str = "ap-southeast-2",
     repo_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Execute complete C1 cloud slice workflow: sync, Glue job, Athena DDL, query reconciliation."""
-    if repo_root is None:
-        repo_root = Path(__file__).resolve().parents[2]
-
+    """Verify one bound snapshot; preserve historical catalogs and acceptance receipts."""
+    root = repo_root or Path(__file__).resolve().parents[2]
+    snapshot = build_lake_snapshot(root)
+    contract = load_wm0_contract(root / "configs/wm0_contract.yaml")
     session = boto3.Session(profile_name=profile_name, region_name=region_name)
-    s3_client = session.client("s3")
-    glue_client = session.client("glue")
-    athena_client = session.client("athena")
-    sts_client = session.client("sts")
+    account = verify_account(session.client("sts"), region_name, contract)
+    bucket = f"waymark-lake-pilot-{account}-{region_name}"
+    prefix = f"snapshots/{snapshot['snapshot_id']}/"
+    glue = session.client("glue")
+    job_name = "waymark-pilot-medallion-pythonshell"
+    expected_script = f"s3://{bucket}/{prefix}scripts/glue_etl_entry.py"
+    if glue.get_job(JobName=job_name)["Job"]["Command"]["ScriptLocation"] != expected_script:
+        raise ValueError("Glue job must be configured to the prepared snapshot script URI before C1")
+    s3 = session.client("s3")
+    transport = upload_snapshot(s3, bucket, root, snapshot)
+    verify_remote_snapshot(s3, bucket, snapshot)
+    glue_summary = run_glue_job_verification(
+        glue,
+        job_name,
+        arguments={
+            "--WAYMARK_SNAPSHOT_KEY": prefix + "manifest.json",
+            "--WAYMARK_SNAPSHOT_SHA256": transport["manifest"]["sha256"],
+        },
+    )
+    database = f"waymark_pilot_{snapshot['snapshot_id'][:12]}"
+    runner = AthenaQueryRunner(session.client("athena"), "waymark_pilot_wg", "default")
+    runner.run_query(f"CREATE DATABASE IF NOT EXISTS {database}")
+    runner.database = database
+    tables = register_catalog_tables(runner, bucket, root, prefix)
+    if len(tables) != 15:
+        raise ValueError("Incomplete catalog registration")
+    import pandas as pd
 
-    account_id = sts_client.get_caller_identity()["Account"]
-    bucket_name = f"waymark-lake-pilot-{account_id}-{region_name}"
-    glue_db = "waymark_pilot_db"
-    athena_wg = "waymark_pilot_wg"
-    glue_job_name = "waymark-pilot-medallion-pythonshell"
-
-    logger.info("Starting C1 upload to %s...", bucket_name)
-    upload_summary = sync_local_lake_to_s3(s3_client, bucket_name, repo_root)
-
-    logger.info("Executing Glue Python Shell verification job %s...", glue_job_name)
-    glue_summary = run_glue_job_verification(glue_client, glue_job_name)
-
-    logger.info("Registering Athena tables in %s...", glue_db)
-    runner = AthenaQueryRunner(athena_client, athena_wg, glue_db)
-    tables_registered = register_catalog_tables(runner, bucket_name, repo_root)
-
-    # Load local T4 and T5 summaries for comparison
-    t4_path = repo_root / "configs" / "t4_gold_reconciliation.json"
-    t5_path = repo_root / "configs" / "t5_wm2_split_manifest.json"
-    t4_summary = json.loads(t4_path.read_text(encoding="utf-8"))
-    t5_manifest = json.loads(t5_path.read_text(encoding="utf-8"))
-
-    logger.info("Running Athena analytical reconciliation queries...")
-    recon_summary = execute_athena_reconciliation(runner, t4_summary, t5_manifest)
-
-    c1_final_manifest = {
-        "status": "OK",
-        "stage": "C1",
-        "gate": "WM1_VERIFIED",
-        "contract_id": "wm0_v1",
-        "contract_version": "1.0.0",
-        "aws_account_id": account_id,
-        "aws_region": region_name,
-        "lake_bucket": bucket_name,
-        "glue_database": glue_db,
-        "athena_workgroup": athena_wg,
-        "tables_registered": tables_registered,
-        "upload_summary": upload_summary,
-        "glue_job_execution": glue_summary,
-        "athena_reconciliation": recon_summary,
+    keys_by_table = {
+        "silver_orders": ["order_id"],
+        "silver_order_items": ["order_id", "order_item_id"],
+        "silver_order_payments": ["order_id", "payment_sequential"],
+        "silver_order_reviews": ["review_id", "order_id"],
+        "silver_products": ["product_id"],
+        "silver_sellers": ["seller_id"],
+        "silver_customers": ["customer_id"],
+        "silver_geolocation_zip": ["geolocation_zip_code_prefix"],
+        "silver_category_translations": ["product_category_name"],
+        "fact_order_fulfillment": ["order_id"],
+        "order_features_and_splits": ["order_id"],
+        "dim_seller": ["seller_id"],
+        "dim_customer": ["customer_id"],
+        "dim_product": ["product_id"],
+        "dim_geolocation_zip": ["geolocation_zip_code_prefix"],
     }
+    for table in tables:
+        layer = "silver" if table.startswith("silver_") else "gold"
+        expected_location = f"s3://{bucket}/{prefix}{layer}/{table}/"
+        metadata = glue.get_table(DatabaseName=database, Name=table)["Table"]
+        if metadata["StorageDescriptor"]["Location"] != expected_location:
+            raise ValueError(f"Catalog snapshot location mismatch: {table}")
+        keys = keys_by_table[table]
+        local_keys = pd.read_parquet(root / f"data/{layer}/{table}.parquet", columns=keys)
+        remote_keys, _ = runner.run_query(f"SELECT {', '.join(keys)} FROM {table}")
+        observed = [tuple(row.get(key) for key in keys) for row in remote_keys]
+        expected = list(local_keys.astype(str).itertuples(index=False, name=None))
+        if any(None in key for key in observed) or len(set(observed)) != len(observed):
+            raise ValueError(f"Catalog null/duplicate keys: {table}")
+        if set(observed) != set(expected) or len(observed) != len(expected):
+            raise ValueError(f"Catalog key population mismatch: {table}")
+    t4 = json.loads((root / "configs/t4_gold_reconciliation.json").read_text(encoding="utf-8"))
+    t5 = json.loads((root / "configs/t5_wm2_split_manifest.json").read_text(encoding="utf-8"))
+    reconciliation = execute_athena_reconciliation(runner, t4, t5)
+    # Compare complete key/feature rows, not only aggregate totals.
+    local = pd.read_parquet(root / "data/gold/order_features_and_splits.parquet")
+    columns = ["order_id", "split_role", *t5["feature_columns"], "y_days", "y_late"]
+    cloud_rows, _ = runner.run_query("SELECT " + ", ".join(columns) + " FROM order_features_and_splits")
+    verify_feature_rows(local, cloud_rows, columns)
+    verify_remote_snapshot(s3, bucket, snapshot)
+    reconciliation["total_athena_bytes_scanned"] = runner.total_bytes_scanned
+    reconciliation["athena_cost"] = usage_estimate(
+        sum(q["billable_bytes"] for q in runner.query_statistics) / 1e12, "billable_TB", None, ""
+    )
+    report = {
+        "schema": "waymark.c1_reconciliation/v2",
+        "status": "OK",
+        "gate": "WM1_VERIFIED",
+        "snapshot": snapshot,
+        "transport": transport,
+        "glue_job_execution": glue_summary,
+        "glue_database": database,
+        "tables_registered": tables,
+        "athena_reconciliation": reconciliation,
+    }
+    from waymark.snapshots import put_s3_immutable
 
-    output_path = repo_root / "configs" / "c1_cloud_reconciliation.json"
-    output_path.write_text(json.dumps(c1_final_manifest, indent=2) + "\n", encoding="utf-8")
+    put_s3_immutable(
+        s3, bucket, prefix + f"acceptance/{glue_summary['job_run_id']}.json", canonical_json(report)
+    )
+    write_immutable(
+        root / "data/cloud_runs" / snapshot["snapshot_id"] / f"{glue_summary['job_run_id']}.json",
+        canonical_json(report),
+    )
+    return report
 
-    # Also upload reconciliation output to S3
-    s3_client.upload_file(str(output_path), bucket_name, "manifests/c1_cloud_reconciliation.json")
 
-    return c1_final_manifest
+def verify_feature_rows(local: Any, rows: list[dict[str, Any]], columns: list[str]) -> None:
+    """Compare key sets and all model inputs using the declared absolute/relative tolerance."""
+    import pandas as pd
+
+    if len(rows) != len(local) or any(row.get("order_id") is None for row in rows):
+        raise ValueError("Feature/key row count mismatch")
+    remote = pd.DataFrame(rows)
+    if remote["order_id"].duplicated().any() or set(remote["order_id"]) != set(local["order_id"]):
+        raise ValueError("Feature order key mismatch")
+    lhs = local.set_index("order_id").sort_index()
+    rhs = remote.set_index("order_id").sort_index()
+    for column in columns:
+        if column == "order_id":
+            continue
+        a, b = lhs[column], rhs[column]
+        if not (a.isna().to_numpy() == b.isna().to_numpy()).all():
+            raise ValueError(f"Feature null mismatch: {column}")
+        valid = a.notna()
+        if pd.api.types.is_numeric_dtype(a) or pd.api.types.is_bool_dtype(a):
+
+            def number(value: Any) -> float:
+                if str(value).lower() in {"true", "false"}:
+                    return float(str(value).lower() == "true")
+                return float(value)
+
+            if any(
+                not math.isclose(float(x), number(y), rel_tol=1e-6, abs_tol=1e-6)
+                for x, y in zip(a[valid], b[valid], strict=True)
+            ):
+                raise ValueError(f"Feature numeric mismatch: {column}")
+        elif not a[valid].astype(str).equals(b[valid].astype(str)):
+            raise ValueError(f"Feature category mismatch: {column}")
