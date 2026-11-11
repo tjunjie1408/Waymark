@@ -5,10 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pytest
 
 from waymark.batch_adapter import (
-     REQUIRED_PREDICTION_COLUMNS,
+    REQUIRED_PREDICTION_COLUMNS,
     LogicalBatchSpec,
     gold_predictions_key,
     lambda_handler,
@@ -49,9 +50,21 @@ class FakeBatchClient:
         return f"arn:aws:sagemaker:ap-southeast-2:149270211548:transform-job/{job_name}"
 
     def copy_staging_to_gold(self, bucket: str, staging_key: str, gold_key: str) -> None:
-        self.objects[(bucket, gold_key)] = self.objects.get(
-            (bucket, staging_key), "PARQUET_PAYLOAD"
-        )
+        self.objects[(bucket, gold_key)] = self.objects[(bucket, staging_key)]
+
+    def read_bytes(self, bucket: str, key: str) -> bytes:
+        return self.objects[(bucket, key)]
+
+    def put_bytes_immutable(self, bucket: str, key: str, body: bytes) -> None:
+        if (bucket, key) in self.objects and self.objects[(bucket, key)] != body:
+            raise ValueError("Immutable conflict")
+        self.objects[(bucket, key)] = body
+
+    def write_json_if_absent(self, bucket: str, key: str, payload: dict[str, Any]) -> bool:
+        if (bucket, key) in self.objects:
+            return False
+        self.objects[(bucket, key)] = dict(payload)
+        return True
 
 
 def test_c0_terraform_files_and_o7_o8_invariants() -> None:
@@ -199,6 +212,16 @@ def test_o8_staging_validation_rejects_partial_or_invalid_outputs() -> None:
     assert not client.object_exists(bucket, success_marker_key(batch_id))
 
     # Case C: Valid complete batch publishes to Gold and writes _SUCCESS marker
+    client.objects[(bucket, staging_key)] = pd.DataFrame(
+        {
+            "order_id": [f"synthetic-{i}" for i in range(14460)],
+            "eta_p10_days": 1.0,
+            "eta_p50_days": 2.0,
+            "eta_p90_days": 3.0,
+            "prob_late": 0.2,
+            "risk_alert_flag": 0,
+        }
+    ).to_parquet(index=False)
     valid_res = validate_and_publish_staging_predictions(
         client=client,
         bucket=bucket,
@@ -211,7 +234,7 @@ def test_o8_staging_validation_rejects_partial_or_invalid_outputs() -> None:
     )
     assert valid_res["status"] == "PUBLISHED"
     assert client.object_exists(bucket, success_marker_key(batch_id))
-    assert client.object_exists(bucket, gold_predictions_key(batch_id))
+    assert client.object_exists(bucket, valid_res["committed_gold_uri"].removeprefix(f"s3://{bucket}/"))
     manifest = client.read_json(bucket, success_marker_key(batch_id))
     assert manifest["expected_row_count"] == 14460
     assert manifest["logical_batch_id"] == batch_id

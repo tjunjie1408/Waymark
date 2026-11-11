@@ -27,6 +27,15 @@ class BatchStorageAndTransformClient(Protocol):
     def write_json(self, bucket: str, key: str, payload: dict[str, Any]) -> None:
         """Serialize and write a JSON object to S3."""
 
+    def read_bytes(self, bucket: str, key: str) -> bytes:
+        """Read a staging object for actual Parquet/schema validation."""
+
+    def put_bytes_immutable(self, bucket: str, key: str, body: bytes) -> None:
+        """Create content-addressed prediction data without replacement."""
+
+    def write_json_if_absent(self, bucket: str, key: str, payload: dict[str, Any]) -> bool:
+        """Commit once atomically; return False when another publication already won."""
+
     def list_active_transform_jobs(self, name_prefix: str) -> list[str]:
         """Return active (InProgress) TransformJobNames matching name_prefix."""
 
@@ -224,9 +233,7 @@ def validate_and_publish_staging_predictions(
     if expected_row_count <= 0:
         errors.append(f"expected_row_count must be > 0, got {expected_row_count}")
     if observed_row_count != expected_row_count:
-        errors.append(
-            f"Row count mismatch: observed {observed_row_count} != expected {expected_row_count}"
-        )
+        errors.append(f"Row count mismatch: observed {observed_row_count} != expected {expected_row_count}")
     if missing_cols:
         errors.append(f"Missing required prediction columns: {missing_cols}")
     if null_order_id_count > 0:
@@ -245,29 +252,75 @@ def validate_and_publish_staging_predictions(
             "committed_gold_uri": None,
         }
 
-    gold_key = gold_predictions_key(logical_batch_id)
     marker_key = success_marker_key(logical_batch_id)
+    if client.object_exists(bucket, marker_key):
+        marker = client.read_json(bucket, marker_key)
+        if marker.get("spec") != asdict(spec):
+            raise ValueError("Committed batch identity mismatch")
+        return {
+            "status": "DUPLICATE_SKIPPED",
+            "logical_batch_id": logical_batch_id,
+            "committed_gold_uri": marker["gold_s3_uri"],
+            "errors": [],
+        }
+    if not staging_key.startswith(staging_output_prefix(logical_batch_id, attempt_seq)):
+        raise ValueError("Staging object is outside the declared batch/attempt")
+    import io
 
-    client.copy_staging_to_gold(bucket=bucket, staging_key=staging_key, gold_key=gold_key)
+    import pandas as pd
 
-    manifest_payload = {
+    body = client.read_bytes(bucket, staging_key)
+    frame = pd.read_parquet(io.BytesIO(body))
+    if (
+        len(frame) != expected_row_count
+        or not set(REQUIRED_PREDICTION_COLUMNS).issubset(frame.columns)
+        or frame.order_id.isna().any()
+        or frame.order_id.duplicated().any()
+    ):
+        raise ValueError("Actual staging prediction keys, row count or schema are invalid")
+    import numpy as np
+
+    values = frame[["eta_p10_days", "eta_p50_days", "eta_p90_days", "prob_late"]].to_numpy(dtype=float)
+    if (
+        not np.isfinite(values).all()
+        or (values[:, 0] > values[:, 1]).any()
+        or (values[:, 1] > values[:, 2]).any()
+        or ((values[:, 3] < 0) | (values[:, 3] > 1)).any()
+        or not frame.risk_alert_flag.isin([0, 1]).all()
+    ):
+        raise ValueError("Actual staging predictions contain invalid numeric values")
+    digest = hashlib.sha256(body).hexdigest()
+    gold_key = f"gold/predictions/batch_id={logical_batch_id}/objects/{digest}.parquet"
+    client.put_bytes_immutable(bucket, gold_key, body)
+    payload = {
+        "schema": "waymark.prediction_publication/v2",
         "logical_batch_id": logical_batch_id,
         "attempt_seq": attempt_seq,
         "spec": asdict(spec),
         "expected_row_count": expected_row_count,
-        "observed_row_count": observed_row_count,
-        "columns": list(observed_columns),
+        "observed_row_count": len(frame),
+        "columns": list(frame.columns),
+        "sha256": digest,
         "gold_s3_uri": f"s3://{bucket}/{gold_key}",
         "committed_at_utc": datetime.now(UTC).isoformat(),
     }
-    client.write_json(bucket=bucket, key=marker_key, payload=manifest_payload)
-
+    committed = client.write_json_if_absent(bucket, marker_key, payload)
+    if not committed:
+        existing = client.read_json(bucket, marker_key)
+        if existing.get("spec") != asdict(spec):
+            raise ValueError("Concurrent publication identity conflict")
+        return {
+            "status": "DUPLICATE_SKIPPED",
+            "logical_batch_id": logical_batch_id,
+            "committed_gold_uri": existing["gold_s3_uri"],
+            "errors": [],
+        }
     return {
         "status": "PUBLISHED",
         "logical_batch_id": logical_batch_id,
         "attempt_seq": attempt_seq,
         "errors": [],
-        "committed_gold_uri": f"s3://{bucket}/{gold_key}",
+        "committed_gold_uri": payload["gold_s3_uri"],
         "marker_s3_uri": f"s3://{bucket}/{marker_key}",
     }
 
@@ -307,17 +360,48 @@ class Boto3BatchClient:
             ContentType="application/json",
         )
 
+    def read_bytes(self, bucket: str, key: str) -> bytes:
+        return self._s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+
+    def put_bytes_immutable(self, bucket: str, key: str, body: bytes) -> None:
+        from botocore.exceptions import ClientError
+
+        try:
+            self._s3.put_object(Bucket=bucket, Key=key, Body=body, IfNoneMatch="*")
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] not in {"412", "PreconditionFailed"}:
+                raise
+            if self.read_bytes(bucket, key) != body:
+                raise ValueError("Immutable prediction object conflict") from exc
+
+    def write_json_if_absent(self, bucket: str, key: str, payload: dict[str, Any]) -> bool:
+        from botocore.exceptions import ClientError
+
+        try:
+            self._s3.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=json.dumps(payload, sort_keys=True, allow_nan=False).encode(),
+                IfNoneMatch="*",
+            )
+            return True
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] in {"412", "PreconditionFailed"}:
+                return False
+            raise
+
     def list_active_transform_jobs(self, name_prefix: str) -> list[str]:
-        resp = self._sm.list_transform_jobs(
-            NameContains=name_prefix,
-            StatusEquals="InProgress",
-            MaxResults=20,
+        jobs = []
+        pages = self._sm.get_paginator("list_transform_jobs").paginate(
+            NameContains=name_prefix, StatusEquals="InProgress"
         )
-        return [
-            job["TransformJobName"]
-            for job in resp.get("TransformJobSummaries", [])
-            if job["TransformJobName"].startswith(name_prefix)
-        ]
+        for page in pages:
+            jobs.extend(
+                job["TransformJobName"]
+                for job in page.get("TransformJobSummaries", [])
+                if job["TransformJobName"].startswith(name_prefix)
+            )
+        return jobs
 
     def create_transform_job(self, request: dict[str, Any]) -> str:
         resp = self._sm.create_transform_job(**request)
