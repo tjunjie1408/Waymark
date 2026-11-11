@@ -242,18 +242,15 @@ def test_o8_staging_validation_rejects_partial_or_invalid_outputs() -> None:
 
 def test_lambda_handler_invokes_with_mocked_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify lambda_handler parses EventBridge Scheduler payload and delegates to client."""
-    fake_client = FakeBatchClient()
-    monkeypatch.setattr("waymark.batch_adapter.Boto3BatchClient", lambda: fake_client)
+    from batch_fixtures import fixture
 
-    event = {
-        "bucket": "waymark-lake-pilot-149270211548-ap-southeast-2",
-        "model_name": "waymark-pilot-m1-m2-model",
-        "model_artifact_hash": "abc123model",
-        "input_snapshot_hash": "ed79c125992d7f63",
-        "scoring_cutoff_date": "2018-08-29",
-        "config_version": "wm0_v1",
-        "attempt_seq": 1,
-    }
+    from waymark.batch_contract import manifest_key
+
+    fake_client, manifest = fixture()
+    monkeypatch.setattr("waymark.batch_adapter.Boto3BatchClient", lambda: fake_client)
+    event = {"bucket": manifest["bucket"], "batch_manifest_key": manifest_key(manifest), "attempt_seq": 1}
     response = lambda_handler(event, None)
     assert response["status"] == "STARTED"
     assert response["transform_job_name"].startswith("wm-bt-")
+    with pytest.raises(KeyError):
+        lambda_handler({"bucket": manifest["bucket"], "model_name": "unverified-legacy"}, None)

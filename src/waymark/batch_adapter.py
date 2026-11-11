@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -220,6 +221,10 @@ def validate_and_publish_staging_predictions(
     observed_columns: list[str] | tuple[str, ...],
     null_order_id_count: int = 0,
     quantile_crossing_count: int = 0,
+    expected_order_ids: list[str] | None = None,
+    wire_format: str = "parquet",
+    staging_body: bytes | None = None,
+    batch_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Validate staging Batch Transform output and commit Gold marker only on full pass (O8).
 
@@ -255,7 +260,9 @@ def validate_and_publish_staging_predictions(
     marker_key = success_marker_key(logical_batch_id)
     if client.object_exists(bucket, marker_key):
         marker = client.read_json(bucket, marker_key)
-        if marker.get("spec") != asdict(spec):
+        if marker.get("spec") != asdict(spec) or (
+            batch_manifest_sha256 is not None and marker.get("batch_manifest_sha256") != batch_manifest_sha256
+        ):
             raise ValueError("Committed batch identity mismatch")
         return {
             "status": "DUPLICATE_SKIPPED",
@@ -269,8 +276,27 @@ def validate_and_publish_staging_predictions(
 
     import pandas as pd
 
-    body = client.read_bytes(bucket, staging_key)
-    frame = pd.read_parquet(io.BytesIO(body))
+    body = staging_body if staging_body is not None else client.read_bytes(bucket, staging_key)
+    if wire_format == "jsonlines":
+        records = []
+        for line in body.decode("utf-8").strip().splitlines():
+            record = json.loads(line)
+            if not isinstance(record, dict) or set(record) != set(REQUIRED_PREDICTION_COLUMNS):
+                raise ValueError("Invalid JSONLines prediction schema")
+            if not isinstance(record["order_id"], str) or not record["order_id"]:
+                raise ValueError("Invalid prediction order identity")
+            for column in REQUIRED_PREDICTION_COLUMNS[1:]:
+                value = record[column]
+                if type(value) not in (int, float) or not math.isfinite(value):
+                    raise ValueError("Invalid JSONLines numeric prediction")
+            if type(record["risk_alert_flag"]) is not int:
+                raise ValueError("Prediction alert flag must be an integer")
+            records.append(record)
+        frame = pd.DataFrame(records, columns=REQUIRED_PREDICTION_COLUMNS)
+    elif wire_format == "parquet":
+        frame = pd.read_parquet(io.BytesIO(body))
+    else:
+        raise ValueError("Use an explicit parquet or jsonlines wire format")
     if (
         len(frame) != expected_row_count
         or not set(REQUIRED_PREDICTION_COLUMNS).issubset(frame.columns)
@@ -278,7 +304,19 @@ def validate_and_publish_staging_predictions(
         or frame.order_id.duplicated().any()
     ):
         raise ValueError("Actual staging prediction keys, row count or schema are invalid")
+    if any(not isinstance(value, str) or not value for value in frame.order_id):
+        raise ValueError("Prediction order identities must be nonempty strings")
+    if expected_order_ids is not None and (
+        len(expected_order_ids) != expected_row_count
+        or len(set(expected_order_ids)) != expected_row_count
+        or set(frame.order_id) != set(expected_order_ids)
+    ):
+        raise ValueError("Actual prediction order identities differ from the input snapshot")
     import numpy as np
+
+    for column in REQUIRED_PREDICTION_COLUMNS[1:]:
+        if not pd.api.types.is_numeric_dtype(frame[column]) or pd.api.types.is_bool_dtype(frame[column]):
+            raise ValueError("Prediction columns must be numeric, not strings/booleans")
 
     values = frame[["eta_p10_days", "eta_p50_days", "eta_p90_days", "prob_late"]].to_numpy(dtype=float)
     if (
@@ -289,6 +327,11 @@ def validate_and_publish_staging_predictions(
         or not frame.risk_alert_flag.isin([0, 1]).all()
     ):
         raise ValueError("Actual staging predictions contain invalid numeric values")
+    frame = frame[list(REQUIRED_PREDICTION_COLUMNS)].copy()
+    for column in REQUIRED_PREDICTION_COLUMNS[1:-1]:
+        frame[column] = frame[column].astype("float64")
+    frame["risk_alert_flag"] = frame["risk_alert_flag"].astype("int64")
+    body = frame.to_parquet(index=False)
     digest = hashlib.sha256(body).hexdigest()
     gold_key = f"gold/predictions/batch_id={logical_batch_id}/objects/{digest}.parquet"
     client.put_bytes_immutable(bucket, gold_key, body)
@@ -304,10 +347,15 @@ def validate_and_publish_staging_predictions(
         "gold_s3_uri": f"s3://{bucket}/{gold_key}",
         "committed_at_utc": datetime.now(UTC).isoformat(),
     }
+    if batch_manifest_sha256 is not None:
+        payload["batch_manifest_sha256"] = batch_manifest_sha256
     committed = client.write_json_if_absent(bucket, marker_key, payload)
     if not committed:
         existing = client.read_json(bucket, marker_key)
-        if existing.get("spec") != asdict(spec):
+        if existing.get("spec") != asdict(spec) or (
+            batch_manifest_sha256 is not None
+            and existing.get("batch_manifest_sha256") != batch_manifest_sha256
+        ):
             raise ValueError("Concurrent publication identity conflict")
         return {
             "status": "DUPLICATE_SKIPPED",
@@ -328,12 +376,13 @@ def validate_and_publish_staging_predictions(
 class Boto3BatchClient:
     """Production AWS boto3 implementation of BatchStorageAndTransformClient for Lambda."""
 
-    def __init__(self, region_name: str | None = None) -> None:
+    def __init__(self, region_name: str | None = None, session: Any = None) -> None:
         import boto3
 
         region = region_name or os.environ.get("AWS_REGION", "ap-southeast-2")
-        self._s3 = boto3.client("s3", region_name=region)
-        self._sm = boto3.client("sagemaker", region_name=region)
+        session = session or boto3
+        self._s3 = session.client("s3", region_name=region)
+        self._sm = session.client("sagemaker", region_name=region)
 
     def object_exists(self, bucket: str, key: str) -> bool:
         from botocore.exceptions import ClientError
@@ -362,6 +411,28 @@ class Boto3BatchClient:
 
     def read_bytes(self, bucket: str, key: str) -> bytes:
         return self._s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+
+    def object_sha256(self, bucket: str, key: str) -> str:
+        from contextlib import closing
+
+        hasher = hashlib.sha256()
+        with closing(self._s3.get_object(Bucket=bucket, Key=key)["Body"]) as stream:
+            for chunk in iter(lambda: stream.read(65536), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def describe_model(self, name: str) -> dict[str, Any]:
+        return self._sm.describe_model(ModelName=name)
+
+    def describe_transform_job(self, name: str) -> dict[str, Any]:
+        return self._sm.describe_transform_job(TransformJobName=name)
+
+    def list_keys(self, bucket: str, prefix: str) -> list[str]:
+        return [
+            item["Key"]
+            for page in self._s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix)
+            for item in page.get("Contents", [])
+        ]
 
     def put_bytes_immutable(self, bucket: str, key: str, body: bytes) -> None:
         from botocore.exceptions import ClientError
@@ -419,26 +490,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """AWS Lambda entrypoint invoked by EventBridge Scheduler (O8)."""
     del context
     bucket = event.get("bucket") or os.environ["WAYMARK_LAKE_BUCKET"]
-    model_name = event.get("model_name") or os.environ.get("WAYMARK_MODEL_NAME", "waymark-m1-m2-prod")
-    input_s3_key = event.get("input_s3_key") or os.environ.get(
-        "WAYMARK_BATCH_INPUT_KEY", "gold/batch_inputs/current_scoring_input.csv"
-    )
-    instance_type = event.get("instance_type") or os.environ.get("WAYMARK_INSTANCE_TYPE", "ml.m5.large")
-    attempt_seq = int(event.get("attempt_seq", 1))
+    from waymark.batch_delivery import load_batch_manifest, submit_batch
 
-    spec = LogicalBatchSpec(
-        model_artifact_hash=str(event["model_artifact_hash"]),
-        input_snapshot_hash=str(event["input_snapshot_hash"]),
-        scoring_cutoff_date=str(event["scoring_cutoff_date"]),
-        config_version=str(event.get("config_version", "wm0_v1")),
-    )
     client = Boto3BatchClient()
-    return trigger_batch_transform_idempotent(
-        client=client,
-        bucket=bucket,
-        spec=spec,
-        attempt_seq=attempt_seq,
-        model_name=model_name,
-        input_s3_key=input_s3_key,
-        instance_type=instance_type,
-    )
+    manifest = load_batch_manifest(client, bucket, event["batch_manifest_key"])
+    return submit_batch(client, manifest, attempt_seq=event.get("attempt_seq", 1))

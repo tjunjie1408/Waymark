@@ -77,6 +77,16 @@ variable "enable_batch_schedule" {
   default     = false
 }
 
+variable "batch_manifest_s3_key" {
+  description = "Content-addressed accepted batch descriptor; leave null with the schedule disabled."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.batch_manifest_s3_key == null ? true : can(regex("^batch/manifests/[0-9a-f]{64}\\.json$", var.batch_manifest_s3_key))
+    error_message = "Use the exact batch/manifests/SHA256.json key prepared by waymark prepare-batch."
+  }
+}
+
 variable "budget_limit_usd" {
   description = "Hard total project cloud spend cap in USD (PRD F3)."
   type        = string

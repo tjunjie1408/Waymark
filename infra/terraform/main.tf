@@ -328,8 +328,19 @@ resource "aws_iam_role_policy" "sagemaker_execution" {
 # -----------------------------------------------------------------------------
 data "archive_file" "batch_adapter_zip" {
   type        = "zip"
-  source_file = "${path.module}/../../src/waymark/batch_adapter.py"
   output_path = "${path.module}/build/batch_adapter.zip"
+
+  source {
+    content  = "from waymark.batch_adapter import lambda_handler\n"
+    filename = "batch_adapter.py"
+  }
+  dynamic "source" {
+    for_each = toset(["__init__.py", "batch_adapter.py", "batch_contract.py", "batch_delivery.py", "feature_schema.py", "training_environment.py", "artifacts.py", "remote_requirements.txt"])
+    content {
+      content  = file("${path.module}/../../src/waymark/${source.value}")
+      filename = "waymark/${source.value}"
+    }
+  }
 }
 
 resource "aws_cloudwatch_log_group" "batch_adapter" {
@@ -475,18 +486,20 @@ resource "aws_scheduler_schedule" "daily_batch_scoring" {
     role_arn = aws_iam_role.scheduler_invoke_lambda.arn
 
     input = jsonencode({
-      bucket              = aws_s3_bucket.waymark_lake.id
-      model_name          = "${local.name_prefix}-m1-m2-model"
-      model_artifact_hash = "pending_t6_t7_artifact"
-      input_snapshot_hash = "ed79c125992d7f63"
-      scoring_cutoff_date = "2018-08-29"
-      config_version      = "wm0_v1"
-      attempt_seq         = 1
+      bucket             = aws_s3_bucket.waymark_lake.id
+      batch_manifest_key = var.batch_manifest_s3_key
+      attempt_seq        = 1
     })
 
     retry_policy {
       maximum_event_age_in_seconds = 3600
       maximum_retry_attempts       = 1
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = !var.enable_batch_schedule || var.batch_manifest_s3_key != null
+      error_message = "An enabled schedule requires a prepared, content-addressed batch manifest."
     }
   }
 }

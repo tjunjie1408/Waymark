@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from waymark.artifacts import canonical_json, write_immutable
+from waymark.batch_cli import BATCH_COMMANDS, add_batch_commands, run_batch_command
 from waymark.bronze_silver import build_bronze, build_silver
 from waymark.cloud_slice import run_c1_orchestration
 from waymark.contracts import load_discriminating_fixture, load_wm0_contract
@@ -20,6 +21,7 @@ from waymark.training import create_sourcedir_tarball, run_remote_training
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="waymark", description="Waymark fulfillment DE/DS CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    add_batch_commands(subparsers)
 
     verify_parser = subparsers.add_parser("verify-wm0", help="Validate WM0 contract and synthetic fixture")
     verify_parser.add_argument("--contract", default="configs/wm0_contract.yaml")
@@ -103,6 +105,8 @@ def main(argv: list[str] | None = None) -> int:
     source_parser.add_argument("--output", type=Path, required=True)
 
     args = parser.parse_args(argv)
+    if args.command in BATCH_COMMANDS:
+        return run_batch_command(args)
     if args.command == "prepare-training-source":
         import hashlib
 
