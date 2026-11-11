@@ -22,7 +22,9 @@ The project total cloud-spend cap is USD 30. The USD 8.50 pilot figure in the ex
 
 ![Waymark AWS Architecture](docs/images/waymark_aws_architecture.png)
 
-> Conceptual reference architecture. The VPC/subnet, security-group and endpoint elements shown are not provisioned by the current Terraform. This image is not deployment evidence. The editable source is [`docs/images/waymark_aws_architecture.drawio`](docs/images/waymark_aws_architecture.drawio).
+> Purpose: predict order delivery time and late-delivery risk, then publish complete, reproducible prediction batches for analysis. The horizontal framework distinguishes model release from recurring scoring and includes target integrations; it is not deployment evidence. Training and end-to-end scoring remain unexecuted. See the [purpose and handoff notes](docs/architecture.md), [deployment preparation](docs/operations.md#before-the-next-terraform-apply), [editable source](docs/images/waymark_aws_architecture.drawio), and [SVG](docs/images/waymark_aws_architecture.svg).
+
+Local batch preparation now binds accepted model/input identities, provides prediction-only serving, finalizes successful JSONLines output into committed Parquet, and exposes only verified commits to readers. Publication is an explicit CLI operation; see the [batch delivery guide](docs/batch-delivery.md). Real model training, serving-image verification and scheduled end-to-end AWS acceptance remain separate work.
 
 ### Core Components
 
@@ -39,7 +41,7 @@ The project total cloud-spend cap is USD 30. The USD 8.50 pilot figure in the ex
    - Compute: `ml.m5.large` Managed Spot in `ap-southeast-2` (Sydney) with identity-bound completed-stage checkpoints; an interrupted fit restarts and its lost work is unknown.
 4. **Batch Inference & Idempotent Orchestration**:
    - **Amazon EventBridge**: Daily schedule defined but disabled by default; future WM4 execution requires verified model/input artifacts.
-   - **AWS Lambda Batch Adapter**: Submits Batch Transform requests and checks existing logical batches. A separate publisher verifies actual Parquet output and conditionally commits an immutable object reference. Live end-to-end delivery remains unverified.
+   - **AWS Lambda Batch Adapter**: Submits Batch Transform requests and checks existing logical batches. A separate finalizer verifies JSONLines output, normalizes it to Parquet and conditionally commits an immutable object reference. Live end-to-end delivery remains unverified.
 
 ---
 
@@ -70,7 +72,7 @@ waymark/
 │       ├── variables.tf
 │       └── versions.tf
 ├── scripts/
-│   ├── build_drawio_diagram.py       # Programmatic draw.io architecture generator
+│   ├── build_drawio_diagram.py       # Validate/render the canonical draw.io source
 │   └── glue_etl_entry.py             # Serverless Glue Python Shell entrypoint
 ├── src/
 │   └── waymark/                      # Core Python package
