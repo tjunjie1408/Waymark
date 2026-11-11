@@ -41,7 +41,33 @@ resource "aws_resourcegroups_group" "waymark" {
 # -----------------------------------------------------------------------------
 resource "aws_s3_bucket" "waymark_lake" {
   bucket        = local.lake_bucket_name
-  force_destroy = true
+  force_destroy = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_versioning" "waymark_lake" {
+  bucket = aws_s3_bucket.waymark_lake.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_policy" "require_tls" {
+  bucket = aws_s3_bucket.waymark_lake.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = [aws_s3_bucket.waymark_lake.arn, "${aws_s3_bucket.waymark_lake.arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
 }
 
 resource "aws_s3_bucket_public_access_block" "waymark_lake" {
@@ -190,7 +216,7 @@ resource "aws_glue_job" "bronze_silver_gold_etl" {
   command {
     name            = "pythonshell"
     python_version  = "3.9"
-    script_location = "s3://${aws_s3_bucket.waymark_lake.id}/scripts/glue_etl_entry.py"
+    script_location = var.glue_snapshot_script_uri != null ? var.glue_snapshot_script_uri : "s3://${aws_s3_bucket.waymark_lake.id}/scripts/UNPREPARED_DO_NOT_RUN.py"
   }
 
   default_arguments = {

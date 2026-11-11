@@ -4,6 +4,16 @@ variable "project_name" {
   default     = "waymark"
 }
 
+variable "glue_snapshot_script_uri" {
+  description = "Content-addressed script URI printed by waymark prepare-cloud-snapshot. Null keeps the job unprepared."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.glue_snapshot_script_uri == null ? true : can(regex("^s3://waymark-lake-pilot-149270211548-ap-southeast-2/snapshots/[0-9a-f]{64}/scripts/glue_etl_entry.py$", var.glue_snapshot_script_uri))
+    error_message = "Glue must use the prepared immutable Waymark snapshot script."
+  }
+}
+
 variable "environment" {
   description = "Deployment stage label (pilot for bounded C1-T9 execution)."
   type        = string
