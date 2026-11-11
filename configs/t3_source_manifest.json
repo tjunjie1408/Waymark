@@ -1,0 +1,218 @@
+{
+  "status": "OK",
+  "stage": "T3",
+  "contract_id": "wm0_v1",
+  "contract_version": "1.0.0",
+  "bronze_manifest": {
+    "contract_id": "wm0_v1",
+    "contract_version": "1.0.0",
+    "dataset_slug": "olistbr/brazilian-ecommerce",
+    "table_count": 9,
+    "total_rows": 1550922,
+    "total_size_bytes": 126186995,
+    "tables": {
+      "olist_orders_dataset": {
+        "filename": "olist_orders_dataset.csv",
+        "parquet_file": "olist_orders_dataset.parquet",
+        "sha256": "8df58ef3d2d7e9944010f7beecd9b75367f5588ec6e3c91cec19ae3345ef9ecf",
+        "size_bytes": 17654914,
+        "row_count": 99441,
+        "columns": [
+          "order_id",
+          "customer_id",
+          "order_status",
+          "order_purchase_timestamp",
+          "order_approved_at",
+          "order_delivered_carrier_date",
+          "order_delivered_customer_date",
+          "order_estimated_delivery_date"
+        ]
+      },
+      "olist_order_items_dataset": {
+        "filename": "olist_order_items_dataset.csv",
+        "parquet_file": "olist_order_items_dataset.parquet",
+        "sha256": "0bc4d068c4fe38cbb01bd90e8746e3c613fe7b4baef75fab7b0e329701c3e279",
+        "size_bytes": 15438671,
+        "row_count": 112650,
+        "columns": [
+          "order_id",
+          "order_item_id",
+          "product_id",
+          "seller_id",
+          "shipping_limit_date",
+          "price",
+          "freight_value"
+        ]
+      },
+      "olist_order_payments_dataset": {
+        "filename": "olist_order_payments_dataset.csv",
+        "parquet_file": "olist_order_payments_dataset.parquet",
+        "sha256": "4f713964f2815dbbaa40b9488268c55aac3627bfce5aa96cf58d1f3616de3cc0",
+        "size_bytes": 5777138,
+        "row_count": 103886,
+        "columns": [
+          "order_id",
+          "payment_sequential",
+          "payment_type",
+          "payment_installments",
+          "payment_value"
+        ]
+      },
+      "olist_order_reviews_dataset": {
+        "filename": "olist_order_reviews_dataset.csv",
+        "parquet_file": "olist_order_reviews_dataset.parquet",
+        "sha256": "012b61c7593e34f51fa614efdf802b9c7056ce6aae5307ddb93236e7cfc797d7",
+        "size_bytes": 14451670,
+        "row_count": 99224,
+        "columns": [
+          "review_id",
+          "order_id",
+          "review_score",
+          "review_comment_title",
+          "review_comment_message",
+          "review_creation_date",
+          "review_answer_timestamp"
+        ]
+      },
+      "olist_products_dataset": {
+        "filename": "olist_products_dataset.csv",
+        "parquet_file": "olist_products_dataset.parquet",
+        "sha256": "3e6569628a17fbc75fd206ee357b59e20364b9afa90f5b6cd5b4d624c58aa9cc",
+        "size_bytes": 2379446,
+        "row_count": 32951,
+        "columns": [
+          "product_id",
+          "product_category_name",
+          "product_name_lenght",
+          "product_description_lenght",
+          "product_photos_qty",
+          "product_weight_g",
+          "product_length_cm",
+          "product_height_cm",
+          "product_width_cm"
+        ]
+      },
+      "olist_sellers_dataset": {
+        "filename": "olist_sellers_dataset.csv",
+        "parquet_file": "olist_sellers_dataset.parquet",
+        "sha256": "1f643d2b950373b85735e7794b20986f528d7a000432e7c6f9bcbb44d0846a0e",
+        "size_bytes": 174703,
+        "row_count": 3095,
+        "columns": [
+          "seller_id",
+          "seller_zip_code_prefix",
+          "seller_city",
+          "seller_state"
+        ]
+      },
+      "olist_customers_dataset": {
+        "filename": "olist_customers_dataset.csv",
+        "parquet_file": "olist_customers_dataset.parquet",
+        "sha256": "983a422239e1712ded753b3bf9ecf47dc73f144d306029dcfa99e70a226883d2",
+        "size_bytes": 9033957,
+        "row_count": 99441,
+        "columns": [
+          "customer_id",
+          "customer_unique_id",
+          "customer_zip_code_prefix",
+          "customer_city",
+          "customer_state"
+        ]
+      },
+      "olist_geolocation_dataset": {
+        "filename": "olist_geolocation_dataset.csv",
+        "parquet_file": "olist_geolocation_dataset.parquet",
+        "sha256": "b514f6fc991b9566aeba02aa5d67e2c3630f034b60a0e05aa0d082a3b66d88d6",
+        "size_bytes": 61273883,
+        "row_count": 1000163,
+        "columns": [
+          "geolocation_zip_code_prefix",
+          "geolocation_lat",
+          "geolocation_lng",
+          "geolocation_city",
+          "geolocation_state"
+        ]
+      },
+      "product_category_name_translation": {
+        "filename": "product_category_name_translation.csv",
+        "parquet_file": "product_category_name_translation.parquet",
+        "sha256": "a81f0d1f27b27e7293f761bc79e3ce8f348ee39c4b3ed3e49bde38f478586278",
+        "size_bytes": 2613,
+        "row_count": 71,
+        "columns": [
+          "product_category_name",
+          "product_category_name_english"
+        ]
+      }
+    }
+  },
+  "silver_accounting": {
+    "contract_id": "wm0_v1",
+    "contract_version": "1.0.0",
+    "orders": {
+      "raw_row_count": 99441,
+      "distinct_order_id_count": 99441,
+      "eligible_mature_count": 96395,
+      "excluded_count": 3046,
+      "eligibility_breakdown": {
+        "ELIGIBLE_MATURE": 96395,
+        "EXCL_CANCELED_OR_UNAVAILABLE": 1093,
+        "EXCL_MISSING_APPROVAL": 160,
+        "EXCL_NONPOSITIVE_DURATION": 61,
+        "EXCL_NO_ITEMS": 3,
+        "EXCL_UNDELIVERED_OR_MISSING_DELIVERY_TS": 1729
+      },
+      "order_status_breakdown": {
+        "approved": 2,
+        "canceled": 625,
+        "created": 5,
+        "delivered": 96478,
+        "invoiced": 314,
+        "processing": 301,
+        "shipped": 1107,
+        "unavailable": 609
+      }
+    },
+    "order_items": {
+      "raw_row_count": 112650,
+      "distinct_order_id_count": 98666,
+      "total_price_brl": 13591643.7,
+      "total_freight_brl": 2251909.54
+    },
+    "order_payments": {
+      "raw_row_count": 103886,
+      "distinct_order_id_count": 99440,
+      "total_payment_value_brl": 16008872.12
+    },
+    "order_reviews": {
+      "raw_row_count": 99224,
+      "deduped_logical_key_row_count": 99224,
+      "duplicate_logical_key_rows_dropped": 0,
+      "distinct_review_id_count": 98410,
+      "distinct_order_id_count": 98673
+    },
+    "products": {
+      "raw_row_count": 32951,
+      "dim_missing_or_zero_count": 6,
+      "missing_category_name_count": 610,
+      "untranslated_category_fallback_count": 13
+    },
+    "geolocation": {
+      "raw_row_count": 1000163,
+      "exact_duplicate_rows_dropped": 261831,
+      "deduped_row_count": 738332,
+      "out_of_bounds_rows_dropped": 33,
+      "in_bounds_row_count": 738299,
+      "distinct_in_bounds_zip_prefix_count": 19010
+    },
+    "sellers": {
+      "raw_row_count": 3095,
+      "geo_missing_count": 7
+    },
+    "customers": {
+      "raw_row_count": 99441,
+      "distinct_customer_unique_id_count": 96096,
+      "geo_missing_count": 279
+    }
+  }
+}
