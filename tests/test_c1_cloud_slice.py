@@ -4,13 +4,37 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
-from waymark.cloud_slice import pyarrow_schema_to_athena_ddl
+from waymark.cloud_slice import pyarrow_schema_to_athena_ddl, run_glue_job_verification
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("observed_key", ["accepted/manifest.json", "other/manifest.json"])
+def test_resume_glue_run_requires_exact_snapshot_without_resubmission(observed_key: str) -> None:
+    client = Mock()
+    client.get_job_run.return_value = {
+        "JobRun": {
+            "JobRunState": "SUCCEEDED",
+            "ExecutionTime": 15,
+            "MaxCapacity": 0.0625,
+            "Arguments": {"--WAYMARK_SNAPSHOT_KEY": observed_key, "--WAYMARK_SNAPSHOT_SHA256": "sha"},
+        }
+    }
+    arguments = {"--WAYMARK_SNAPSHOT_KEY": "accepted/manifest.json", "--WAYMARK_SNAPSHOT_SHA256": "sha"}
+    if observed_key.startswith("other/"):
+        with pytest.raises(ValueError, match="snapshot arguments"):
+            run_glue_job_verification(client, "job", arguments=arguments, existing_run_id="existing-run")
+    else:
+        result = run_glue_job_verification(client, "job", arguments=arguments, existing_run_id="existing-run")
+        assert result["job_run_id"] == "existing-run"
+        assert result["status"] == "SUCCEEDED"
+    client.start_job_run.assert_not_called()
 
 
 def test_type_map_and_ddl_generation(tmp_path: Path) -> None:

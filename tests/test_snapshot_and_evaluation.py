@@ -250,9 +250,11 @@ def test_training_source_is_deterministic_and_legacy_inputs_are_rejected() -> No
 
 
 @pytest.mark.parametrize("tamper_feature", [False, True])
+@pytest.mark.parametrize("catalog_suffix", ["/", "", "-other"])
 def test_complete_mock_cloud_journey_requires_current_object_and_feature_identity(
     synthetic_lake: Path,
     tamper_feature: bool,
+    catalog_suffix: str,
 ) -> None:
     import duckdb
 
@@ -280,7 +282,11 @@ def test_complete_mock_cloud_journey_requires_current_object_and_feature_identit
 
         def get_table(self, *, Name, **kwargs):
             layer = "silver" if Name.startswith("silver_") else "gold"
-            return {"Table": {"StorageDescriptor": {"Location": f"s3://{bucket}/{prefix}{layer}/{Name}/"}}}
+            return {
+                "Table": {
+                    "StorageDescriptor": {"Location": f"s3://{bucket}/{prefix}{layer}/{Name}{catalog_suffix}"}
+                }
+            }
 
     class QueryRunner:
         def __init__(self, *args):
@@ -320,7 +326,11 @@ def test_complete_mock_cloud_journey_requires_current_object_and_feature_identit
         patch("waymark.cloud_slice.boto3.Session", return_value=session),
         patch("waymark.cloud_slice.AthenaQueryRunner", QueryRunner),
     ):
-        if tamper_feature:
+        if catalog_suffix == "-other":
+            with pytest.raises(ValueError, match="location mismatch"):
+                run_c1_orchestration(repo_root=synthetic_lake)
+            assert not any("/acceptance/" in key for key in s3.objects)
+        elif tamper_feature:
             with pytest.raises(ValueError, match="numeric mismatch"):
                 run_c1_orchestration(repo_root=synthetic_lake)
             assert not any("/acceptance/" in key for key in s3.objects)

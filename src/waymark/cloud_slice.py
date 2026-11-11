@@ -149,13 +149,23 @@ def run_glue_job_verification(
     timeout_seconds: float = 1000.0,
     dpu_hourly_rate: float | None = None,
     rate_source: str = "",
+    existing_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the snapshot verifier, bounded by a client deadline and remote job timeout."""
-    response = glue_client.start_job_run(JobName=job_name, Arguments=arguments or {})
-    run_id = response["JobRunId"]
+    if existing_run_id is None:
+        response = glue_client.start_job_run(JobName=job_name, Arguments=arguments or {})
+        run_id = response["JobRunId"]
+    else:
+        if not arguments:
+            raise ValueError("Resuming Glue requires exact snapshot arguments")
+        run_id = existing_run_id
     deadline = time.monotonic() + timeout_seconds
     while True:
         run = glue_client.get_job_run(JobName=job_name, RunId=run_id)["JobRun"]
+        if existing_run_id is not None and any(
+            (run.get("Arguments") or {}).get(key) != value for key, value in arguments.items()
+        ):
+            raise ValueError("Existing Glue run snapshot arguments do not match")
         state = run["JobRunState"]
         if state == "SUCCEEDED":
             duration = run.get("ExecutionTime")
@@ -351,12 +361,20 @@ def run_c1_orchestration(
     profile_name: str = "waymark",
     region_name: str = "ap-southeast-2",
     repo_root: Path | None = None,
+    *,
+    use_aws_cli: bool = False,
+    resume_glue_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Verify one bound snapshot; preserve historical catalogs and acceptance receipts."""
     root = repo_root or Path(__file__).resolve().parents[2]
     snapshot = build_lake_snapshot(root)
     contract = load_wm0_contract(root / "configs/wm0_contract.yaml")
-    session = boto3.Session(profile_name=profile_name, region_name=region_name)
+    if use_aws_cli:
+        from waymark.aws_cli import AwsCliSession
+
+        session = AwsCliSession(profile_name, region_name)
+    else:
+        session = boto3.Session(profile_name=profile_name, region_name=region_name)
     account = verify_account(session.client("sts"), region_name, contract)
     bucket = f"waymark-lake-pilot-{account}-{region_name}"
     prefix = f"snapshots/{snapshot['snapshot_id']}/"
@@ -375,6 +393,7 @@ def run_c1_orchestration(
             "--WAYMARK_SNAPSHOT_KEY": prefix + "manifest.json",
             "--WAYMARK_SNAPSHOT_SHA256": transport["manifest"]["sha256"],
         },
+        existing_run_id=resume_glue_run_id,
     )
     database = f"waymark_pilot_{snapshot['snapshot_id'][:12]}"
     runner = AthenaQueryRunner(session.client("athena"), "waymark_pilot_wg", "default")
@@ -406,7 +425,7 @@ def run_c1_orchestration(
         layer = "silver" if table.startswith("silver_") else "gold"
         expected_location = f"s3://{bucket}/{prefix}{layer}/{table}/"
         metadata = glue.get_table(DatabaseName=database, Name=table)["Table"]
-        if metadata["StorageDescriptor"]["Location"] != expected_location:
+        if metadata["StorageDescriptor"]["Location"].rstrip("/") != expected_location.rstrip("/"):
             raise ValueError(f"Catalog snapshot location mismatch: {table}")
         keys = keys_by_table[table]
         local_keys = pd.read_parquet(root / f"data/{layer}/{table}.parquet", columns=keys)

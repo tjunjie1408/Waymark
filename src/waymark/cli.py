@@ -70,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     c1_parser.add_argument("--profile", default="waymark")
     c1_parser.add_argument("--region", default="ap-southeast-2")
+    c1_parser.add_argument("--aws-cli", action="store_true", help="Use AWS CLI for all C1 cloud calls")
+    c1_parser.add_argument(
+        "--resume-glue-run", help="Resume reconciliation using an exact snapshot-bound Glue run"
+    )
 
     train_parser = subparsers.add_parser(
         "train-remote",
@@ -222,6 +226,8 @@ def main(argv: list[str] | None = None) -> int:
         manifest = run_c1_orchestration(
             profile_name=args.profile,
             region_name=args.region,
+            use_aws_cli=args.aws_cli,
+            resume_glue_run_id=args.resume_glue_run,
         )
         print(json.dumps(manifest, indent=2))
         return 0
