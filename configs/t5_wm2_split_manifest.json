@@ -1,0 +1,111 @@
+{
+  "status": "OK",
+  "stage": "T5",
+  "gate": "WM2_VERIFIED_LOCALLY",
+  "contract_id": "wm0_v1",
+  "contract_version": "1.0.0",
+  "feature_table": "order_features_and_splits.parquet",
+  "feature_table_sha256": "ed79c125992d7f6361dfa1fbc01ad8baa638f1cd9a8cd915db693d73d96e2931",
+  "feature_column_count": 34,
+  "feature_columns": [
+    "primary_seller_haversine_km",
+    "max_seller_haversine_km",
+    "mean_seller_haversine_km",
+    "is_interstate",
+    "geo_missing_flag",
+    "item_count",
+    "distinct_seller_count",
+    "distinct_product_count",
+    "is_multi_seller",
+    "total_item_price_brl",
+    "total_freight_brl",
+    "freight_to_price_ratio",
+    "total_weight_g",
+    "total_volume_cm3",
+    "volumetric_density_g_per_cm3",
+    "dim_missing_flag",
+    "promised_days",
+    "approval_lag_hours",
+    "shipping_limit_days_from_approval",
+    "approval_dow",
+    "approval_month",
+    "primary_payment_type",
+    "max_payment_installments",
+    "primary_seller_id",
+    "primary_seller_state",
+    "customer_state",
+    "state_corridor",
+    "primary_product_category_name_english",
+    "congestion_order_count_30d",
+    "seller_delivered_count_30d",
+    "seller_late_count_30d",
+    "seller_cold_start_flag",
+    "seller_late_rate_30d_smoothed",
+    "seller_median_eta_days_30d"
+  ],
+  "forbidden_columns_excluded": [
+    "delivery_duration_days",
+    "is_late_delivered",
+    "latest_review_answer_timestamp",
+    "min_review_score",
+    "order_delivered_carrier_date",
+    "order_delivered_customer_date",
+    "order_status",
+    "review_answer_timestamp",
+    "review_count",
+    "review_creation_date",
+    "review_score",
+    "y_days",
+    "y_late"
+  ],
+  "split_summary": {
+    "contract_id": "wm0_v1",
+    "contract_version": "1.0.0",
+    "ordering_timestamp": "order_approved_at",
+    "boundaries": {
+      "train_min_approved_at": "2016-09-15 12:16:38",
+      "T_train_end": "2018-04-15 23:50:13",
+      "T_val_end": "2018-06-21 09:43:03",
+      "T_test_end": "2018-08-29 15:10:26"
+    },
+    "counts": {
+      "total_orders": 99441,
+      "eligible_mature_orders": 96395,
+      "excluded_global_orders": 3046,
+      "train_window_raw": 67476,
+      "train_mature_retained": 64404,
+      "train_purged_immature_at_boundary": 3072,
+      "val_calibration_window_raw": 14459,
+      "val_calibration_mature_retained": 12551,
+      "val_purged_immature_at_boundary": 1908,
+      "holdout_test_orders": 14460
+    },
+    "target_rates_by_split": {
+      "train_mean_y_days": 12.9593,
+      "train_late_rate": 0.0796,
+      "val_calibration_mean_y_days": 9.9345,
+      "val_calibration_late_rate": 0.0539,
+      "holdout_test_mean_y_days": 7.9398,
+      "holdout_test_late_rate": 0.066
+    },
+    "deadline_comparison_sensitivity": {
+      "exact_timestamp_late_rate_eligible": 0.0812,
+      "end_of_day_235959_late_rate_eligible": 0.0678
+    }
+  },
+  "non_learned_baselines_val_preview": {
+    "evaluated_split": "val_calibration",
+    "note": "Non-learned arithmetic/empirical baselines fitted strictly on train; holdout_test untouched before WM3.",
+    "B0_platform_promised_eta": {
+      "val_mae_days": 14.446
+    },
+    "B1_corridor_empirical_quantiles_eta": {
+      "val_mae_p50_days": 4.3667,
+      "val_interval_coverage_80": 0.7536,
+      "val_interval_mean_width_days": 15.5159
+    },
+    "B0_corridor_historical_late_rate": {
+      "val_brier_score": 0.0515
+    }
+  }
+}
