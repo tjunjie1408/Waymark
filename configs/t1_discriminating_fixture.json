@@ -1,0 +1,249 @@
+{
+  "fixture_id": "t1_discriminating_fixture_v1",
+  "contract_id": "wm0_v1",
+  "provenance": "SYNTHETIC_DISCRIMINATING_FIXTURE",
+  "description": "Eight-order synthetic relational fixture exercising ordinary single-item delivery, multi-item/multi-seller aggregation, multi-payment summation, exact-duplicate geolocation and out-of-bounds coordinates, missing approval timestamp, post-cutoff dispatch/delivery leakage trap, immature historical seller outcome, canceled order exclusion, negative duration anomaly, and cold-start seller fallback.",
+  "reference_split_boundary_T": "2018-02-01T00:00:00",
+  "global_prior_late_rate_at_fixture": 0.25,
+  "prior_smoothing_weight_m": 5.0,
+  "tables": {
+    "olist_sellers_dataset": [
+      {"seller_id": "S_VET", "seller_zip_code_prefix": "01001", "seller_city": "sao paulo", "seller_state": "SP"},
+      {"seller_id": "S_COLD", "seller_zip_code_prefix": "20010", "seller_city": "rio de janeiro", "seller_state": "RJ"},
+      {"seller_id": "S_BADGEO", "seller_zip_code_prefix": "99999", "seller_city": "atlantis", "seller_state": "RJ"}
+    ],
+    "olist_customers_dataset": [
+      {"customer_id": "C_H1", "customer_unique_id": "U_H1", "customer_zip_code_prefix": "20010", "customer_city": "rio de janeiro", "customer_state": "RJ"},
+      {"customer_id": "C_H2", "customer_unique_id": "U_H2", "customer_zip_code_prefix": "20010", "customer_city": "rio de janeiro", "customer_state": "RJ"},
+      {"customer_id": "C_H3", "customer_unique_id": "U_H3", "customer_zip_code_prefix": "20010", "customer_city": "rio de janeiro", "customer_state": "RJ"},
+      {"customer_id": "C_H4", "customer_unique_id": "U_H4", "customer_zip_code_prefix": "20010", "customer_city": "rio de janeiro", "customer_state": "RJ"},
+      {"customer_id": "C_ORD1", "customer_unique_id": "U_ORD1", "customer_zip_code_prefix": "20010", "customer_city": "rio de janeiro", "customer_state": "RJ"},
+      {"customer_id": "C_MULTI", "customer_unique_id": "U_MULTI", "customer_zip_code_prefix": "01001", "customer_city": "sao paulo", "customer_state": "SP"},
+      {"customer_id": "C_NOAPP", "customer_unique_id": "U_NOAPP", "customer_zip_code_prefix": "20010", "customer_city": "rio de janeiro", "customer_state": "RJ"},
+      {"customer_id": "C_CANC", "customer_unique_id": "U_CANC", "customer_zip_code_prefix": "20010", "customer_city": "rio de janeiro", "customer_state": "RJ"}
+    ],
+    "olist_geolocation_dataset": [
+      {"geolocation_zip_code_prefix": "01001", "geolocation_lat": -23.5505, "geolocation_lng": -46.6333, "geolocation_city": "sao paulo", "geolocation_state": "SP"},
+      {"geolocation_zip_code_prefix": "01001", "geolocation_lat": -23.5505, "geolocation_lng": -46.6333, "geolocation_city": "sao paulo", "geolocation_state": "SP"},
+      {"geolocation_zip_code_prefix": "01001", "geolocation_lat": -23.5525, "geolocation_lng": -46.6353, "geolocation_city": "sao paulo", "geolocation_state": "SP"},
+      {"geolocation_zip_code_prefix": "20010", "geolocation_lat": -22.9068, "geolocation_lng": -43.1729, "geolocation_city": "rio de janeiro", "geolocation_state": "RJ"},
+      {"geolocation_zip_code_prefix": "99999", "geolocation_lat": 45.0000, "geolocation_lng": -10.0000, "geolocation_city": "atlantis", "geolocation_state": "RJ"}
+    ],
+    "olist_products_dataset": [
+      {"product_id": "P_STD", "product_category_name": "beleza_saude", "product_name_lenght": 40, "product_description_lenght": 200, "product_photos_qty": 2, "product_weight_g": 1000, "product_length_cm": 20, "product_height_cm": 10, "product_width_cm": 10},
+      {"product_id": "P_HEAVY", "product_category_name": "informatica_acessorios", "product_name_lenght": 50, "product_description_lenght": 350, "product_photos_qty": 3, "product_weight_g": 3000, "product_length_cm": 30, "product_height_cm": 20, "product_width_cm": 10},
+      {"product_id": "P_BADDIM", "product_category_name": "beleza_saude", "product_name_lenght": 30, "product_description_lenght": 100, "product_photos_qty": 1, "product_weight_g": 500, "product_length_cm": 0, "product_height_cm": 10, "product_width_cm": 10}
+    ],
+    "product_category_name_translation": [
+      {"product_category_name": "beleza_saude", "product_category_name_english": "health_beauty"},
+      {"product_category_name": "informatica_acessorios", "product_category_name_english": "computers_accessories"}
+    ],
+    "olist_orders_dataset": [
+      {
+        "order_id": "O_HIST_1",
+        "customer_id": "C_H1",
+        "order_status": "delivered",
+        "order_purchase_timestamp": "2018-01-01T10:00:00",
+        "order_approved_at": "2018-01-01T12:00:00",
+        "order_delivered_carrier_date": "2018-01-02T12:00:00",
+        "order_delivered_customer_date": "2018-01-05T12:00:00",
+        "order_estimated_delivery_date": "2018-01-08T00:00:00",
+        "_comment": "Historical order 1 for S_VET: delivered in 4.0 days (on time) before O_TARGET_1 approval."
+      },
+      {
+        "order_id": "O_HIST_2",
+        "customer_id": "C_H2",
+        "order_status": "delivered",
+        "order_purchase_timestamp": "2018-01-03T09:00:00",
+        "order_approved_at": "2018-01-03T12:00:00",
+        "order_delivered_carrier_date": "2018-01-05T12:00:00",
+        "order_delivered_customer_date": "2018-01-11T12:00:00",
+        "order_estimated_delivery_date": "2018-01-09T00:00:00",
+        "_comment": "Historical order 2 for S_VET: delivered in 8.0 days (LATE) before O_TARGET_1 approval."
+      },
+      {
+        "order_id": "O_HIST_3",
+        "customer_id": "C_H3",
+        "order_status": "delivered",
+        "order_purchase_timestamp": "2018-01-06T08:00:00",
+        "order_approved_at": "2018-01-06T12:00:00",
+        "order_delivered_carrier_date": "2018-01-07T12:00:00",
+        "order_delivered_customer_date": "2018-01-12T12:00:00",
+        "order_estimated_delivery_date": "2018-01-15T00:00:00",
+        "_comment": "Historical order 3 for S_VET: delivered in 6.0 days (on time) before O_TARGET_1 approval."
+      },
+      {
+        "order_id": "O_HIST_IMMATURE",
+        "customer_id": "C_H4",
+        "order_status": "delivered",
+        "order_purchase_timestamp": "2018-01-10T10:00:00",
+        "order_approved_at": "2018-01-10T12:00:00",
+        "order_delivered_carrier_date": "2018-01-16T12:00:00",
+        "order_delivered_customer_date": "2018-01-25T12:00:00",
+        "order_estimated_delivery_date": "2018-01-18T00:00:00",
+        "_comment": "Leakage trap: approved before O_TARGET_1 (2018-01-15), so it counts in seller 30d congestion (4 orders), but delivered AFTER 2018-01-15 (on 2018-01-25), so its late outcome MUST NOT enter seller_late_rate_30d at O_TARGET_1 cutoff."
+      },
+      {
+        "order_id": "O_TARGET_1",
+        "customer_id": "C_ORD1",
+        "order_status": "delivered",
+        "order_purchase_timestamp": "2018-01-15T09:00:00",
+        "order_approved_at": "2018-01-15T12:00:00",
+        "order_delivered_carrier_date": "2018-01-17T12:00:00",
+        "order_delivered_customer_date": "2018-01-20T12:00:00",
+        "order_estimated_delivery_date": "2018-01-25T00:00:00",
+        "_comment": "Ordinary target order for veteran seller S_VET."
+      },
+      {
+        "order_id": "O_MULTI_2",
+        "customer_id": "C_MULTI",
+        "order_status": "delivered",
+        "order_purchase_timestamp": "2018-01-16T11:00:00",
+        "order_approved_at": "2018-01-16T12:00:00",
+        "order_delivered_carrier_date": "2018-01-19T12:00:00",
+        "order_delivered_customer_date": "2018-01-28T12:00:00",
+        "order_estimated_delivery_date": "2018-01-26T00:00:00",
+        "_comment": "Multi-item, multi-seller, multi-payment order where primary seller is S_COLD (cold-start) and secondary seller is S_BADGEO (out-of-bounds coordinates), with one zero-length product dimension."
+      },
+      {
+        "order_id": "O_MISSING_APP",
+        "customer_id": "C_NOAPP",
+        "order_status": "delivered",
+        "order_purchase_timestamp": "2018-01-17T10:00:00",
+        "order_approved_at": null,
+        "order_delivered_carrier_date": "2018-01-18T12:00:00",
+        "order_delivered_customer_date": "2018-01-22T12:00:00",
+        "order_estimated_delivery_date": "2018-01-27T00:00:00",
+        "_comment": "Excluded from prediction/evaluation due to missing order_approved_at (EXCL_MISSING_APPROVAL), but retained in Silver/Gold fact reconciliation."
+      },
+      {
+        "order_id": "O_CANCELED",
+        "customer_id": "C_CANC",
+        "order_status": "canceled",
+        "order_purchase_timestamp": "2018-01-18T10:00:00",
+        "order_approved_at": "2018-01-18T12:00:00",
+        "order_delivered_carrier_date": null,
+        "order_delivered_customer_date": null,
+        "order_estimated_delivery_date": "2018-01-29T00:00:00",
+        "_comment": "Canceled after approval: valid for approval-time inference feature construction, but excluded from supervised training/evaluation labels (EXCL_CANCELED_OR_UNAVAILABLE), never treated as y_late = 0."
+      }
+    ],
+    "olist_order_items_dataset": [
+      {"order_id": "O_HIST_1", "order_item_id": 1, "product_id": "P_STD", "seller_id": "S_VET", "shipping_limit_date": "2018-01-04T12:00:00", "price": 100.00, "freight_value": 20.00},
+      {"order_id": "O_HIST_2", "order_item_id": 1, "product_id": "P_STD", "seller_id": "S_VET", "shipping_limit_date": "2018-01-06T12:00:00", "price": 150.00, "freight_value": 25.00},
+      {"order_id": "O_HIST_3", "order_item_id": 1, "product_id": "P_STD", "seller_id": "S_VET", "shipping_limit_date": "2018-01-09T12:00:00", "price": 80.00, "freight_value": 16.00},
+      {"order_id": "O_HIST_IMMATURE", "order_item_id": 1, "product_id": "P_STD", "seller_id": "S_VET", "shipping_limit_date": "2018-01-14T12:00:00", "price": 120.00, "freight_value": 18.00},
+      {"order_id": "O_TARGET_1", "order_item_id": 1, "product_id": "P_STD", "seller_id": "S_VET", "shipping_limit_date": "2018-01-19T12:00:00", "price": 200.00, "freight_value": 30.00},
+      {"order_id": "O_MULTI_2", "order_item_id": 1, "product_id": "P_HEAVY", "seller_id": "S_COLD", "shipping_limit_date": "2018-01-20T12:00:00", "price": 300.00, "freight_value": 50.00},
+      {"order_id": "O_MULTI_2", "order_item_id": 2, "product_id": "P_BADDIM", "seller_id": "S_BADGEO", "shipping_limit_date": "2018-01-21T12:00:00", "price": 100.00, "freight_value": 20.00},
+      {"order_id": "O_MISSING_APP", "order_item_id": 1, "product_id": "P_STD", "seller_id": "S_VET", "shipping_limit_date": "2018-01-21T12:00:00", "price": 90.00, "freight_value": 15.00},
+      {"order_id": "O_CANCELED", "order_item_id": 1, "product_id": "P_STD", "seller_id": "S_VET", "shipping_limit_date": "2018-01-22T12:00:00", "price": 60.00, "freight_value": 12.00}
+    ],
+    "olist_order_payments_dataset": [
+      {"order_id": "O_HIST_1", "payment_sequential": 1, "payment_type": "credit_card", "payment_installments": 2, "payment_value": 120.00},
+      {"order_id": "O_HIST_2", "payment_sequential": 1, "payment_type": "boleto", "payment_installments": 1, "payment_value": 175.00},
+      {"order_id": "O_HIST_3", "payment_sequential": 1, "payment_type": "credit_card", "payment_installments": 1, "payment_value": 96.00},
+      {"order_id": "O_HIST_IMMATURE", "payment_sequential": 1, "payment_type": "credit_card", "payment_installments": 3, "payment_value": 138.00},
+      {"order_id": "O_TARGET_1", "payment_sequential": 1, "payment_type": "credit_card", "payment_installments": 4, "payment_value": 230.00},
+      {"order_id": "O_MULTI_2", "payment_sequential": 1, "payment_type": "credit_card", "payment_installments": 6, "payment_value": 370.00},
+      {"order_id": "O_MULTI_2", "payment_sequential": 2, "payment_type": "voucher", "payment_installments": 1, "payment_value": 100.00},
+      {"order_id": "O_MISSING_APP", "payment_sequential": 1, "payment_type": "boleto", "payment_installments": 1, "payment_value": 105.00},
+      {"order_id": "O_CANCELED", "payment_sequential": 1, "payment_type": "credit_card", "payment_installments": 1, "payment_value": 72.00}
+    ],
+    "olist_order_reviews_dataset": [
+      {"review_id": "R_H1", "order_id": "O_HIST_1", "review_score": 5, "review_comment_title": null, "review_comment_message": "otimo", "review_creation_date": "2018-01-06T00:00:00", "review_answer_timestamp": "2018-01-06T15:00:00"},
+      {"review_id": "R_H2", "order_id": "O_HIST_2", "review_score": 1, "review_comment_title": "atraso", "review_comment_message": "demorou", "review_creation_date": "2018-01-12T00:00:00", "review_answer_timestamp": "2018-01-12T18:00:00"},
+      {"review_id": "R_T1", "order_id": "O_TARGET_1", "review_score": 5, "review_comment_title": null, "review_comment_message": null, "review_creation_date": "2018-01-21T00:00:00", "review_answer_timestamp": "2018-01-21T10:00:00"}
+    ]
+  },
+  "expected_reconciliation": {
+    "raw_orders_count": 8,
+    "fact_orders_count": 8,
+    "raw_items_count": 9,
+    "sum_item_price_brl": 1200.00,
+    "sum_freight_value_brl": 206.00,
+    "sum_payment_value_brl": 1406.00,
+    "raw_geolocation_rows": 5,
+    "silver_geolocation_after_exact_dedup": 4,
+    "silver_geolocation_in_bounds_rows": 3,
+    "gold_distinct_valid_zip_prefixes": 2,
+    "zip_01001_median_lat": -23.5515,
+    "zip_01001_median_lng": -46.6343
+  },
+  "expected_oracle_by_order": {
+    "O_TARGET_1": {
+      "eligibility_code": "ELIGIBLE_MATURE",
+      "t0_order_approved_at": "2018-01-15T12:00:00",
+      "y_days": 5.0,
+      "promised_days": 9.5,
+      "y_late": 0,
+      "item_count": 1,
+      "distinct_seller_count": 1,
+      "is_multi_seller": false,
+      "primary_seller_id": "S_VET",
+      "total_item_price_brl": 200.00,
+      "total_freight_brl": 30.00,
+      "freight_to_price_ratio": 0.15,
+      "total_weight_g": 1000,
+      "total_volume_cm3": 2000,
+      "volumetric_density_g_per_cm3": 0.5,
+      "dim_missing_flag": 0,
+      "geo_missing_flag": 0,
+      "is_interstate": 1,
+      "primary_seller_haversine_km": 360.8702,
+      "primary_seller_haversine_tol_km": 0.0001,
+      "approval_lag_hours": 3.0,
+      "shipping_limit_days_from_approval": 4.0,
+      "congestion_order_count_30d": 4,
+      "seller_delivered_count_30d": 3,
+      "seller_late_count_30d": 1,
+      "seller_cold_start_flag": 0,
+      "seller_late_rate_30d_smoothed": 0.28125,
+      "seller_median_eta_days_30d": 6.0
+    },
+    "O_MULTI_2": {
+      "eligibility_code": "ELIGIBLE_MATURE",
+      "t0_order_approved_at": "2018-01-16T12:00:00",
+      "y_days": 12.0,
+      "promised_days": 9.5,
+      "y_late": 1,
+      "item_count": 2,
+      "distinct_seller_count": 2,
+      "is_multi_seller": true,
+      "primary_seller_id": "S_COLD",
+      "total_item_price_brl": 400.00,
+      "total_freight_brl": 70.00,
+      "freight_to_price_ratio": 0.175,
+      "total_weight_g": 3500,
+      "total_volume_cm3": null,
+      "volumetric_density_g_per_cm3": null,
+      "dim_missing_flag": 1,
+      "geo_missing_flag": 0,
+      "is_interstate": 1,
+      "primary_seller_haversine_km": 360.8702,
+      "primary_seller_haversine_tol_km": 0.0001,
+      "primary_payment_type": "credit_card",
+      "max_payment_installments": 6,
+      "total_payment_value_brl": 470.00,
+      "congestion_order_count_30d": 0,
+      "seller_delivered_count_30d": 0,
+      "seller_cold_start_flag": 1,
+      "seller_late_rate_30d_smoothed": 0.25,
+      "seller_median_eta_days_30d": null
+    },
+    "O_MISSING_APP": {
+      "eligibility_code": "EXCL_MISSING_APPROVAL",
+      "t0_order_approved_at": null,
+      "included_in_supervised_split": false,
+      "included_in_silver_gold_reconciliation": true
+    },
+    "O_CANCELED": {
+      "eligibility_code": "EXCL_CANCELED_OR_UNAVAILABLE",
+      "t0_order_approved_at": "2018-01-18T12:00:00",
+      "y_days": null,
+      "y_late": null,
+      "included_in_supervised_split": false,
+      "eligible_for_approval_time_inference": true
+    }
+  }
+}

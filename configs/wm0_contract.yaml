@@ -1,0 +1,360 @@
+# Waymark: T1 WM0 Contract Specification (`wm0_v1`)
+# Status: FROZEN at T1 (2026-11-10) for WM0 review.
+# Owns: executable decision values for O1-O8, compatible AWS us-east-1 proposal and bounded pilot cost model.
+
+contract_id: "wm0_v1"
+contract_version: "1.0.0"
+frozen_date: "2026-11-10"
+timezone_display: "Asia/Singapore"
+
+# O1: Data source, provenance and redistribution policy
+o1_source:
+  dataset_name: "Brazilian E-Commerce Public Dataset by Olist"
+  canonical_slug: "olistbr/brazilian-ecommerce"
+  canonical_url: "https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce"
+  license: "CC BY-NC-SA 4.0"
+  redistribution_policy:
+    commit_raw_olist_to_git: false
+    public_fixture_policy: "synthetic_only"
+    rationale: "Avoid CC BY-NC-SA 4.0 ShareAlike/NonCommercial viral restrictions on public code; real Olist CSVs stay in ignored data/raw/olist/ bound by SHA-256 manifest at T3."
+  expected_tables:
+    olist_orders_dataset:
+      filename: "olist_orders_dataset.csv"
+      primary_key: ["order_id"]
+      columns:
+        - "order_id"
+        - "customer_id"
+        - "order_status"
+        - "order_purchase_timestamp"
+        - "order_approved_at"
+        - "order_delivered_carrier_date"
+        - "order_delivered_customer_date"
+        - "order_estimated_delivery_date"
+    olist_order_items_dataset:
+      filename: "olist_order_items_dataset.csv"
+      primary_key: ["order_id", "order_item_id"]
+      columns:
+        - "order_id"
+        - "order_item_id"
+        - "product_id"
+        - "seller_id"
+        - "shipping_limit_date"
+        - "price"
+        - "freight_value"
+    olist_order_payments_dataset:
+      filename: "olist_order_payments_dataset.csv"
+      primary_key: ["order_id", "payment_sequential"]
+      columns:
+        - "order_id"
+        - "payment_sequential"
+        - "payment_type"
+        - "payment_installments"
+        - "payment_value"
+    olist_order_reviews_dataset:
+      filename: "olist_order_reviews_dataset.csv"
+      logical_key: ["review_id", "order_id"]
+      columns:
+        - "review_id"
+        - "order_id"
+        - "review_score"
+        - "review_comment_title"
+        - "review_comment_message"
+        - "review_creation_date"
+        - "review_answer_timestamp"
+    olist_products_dataset:
+      filename: "olist_products_dataset.csv"
+      primary_key: ["product_id"]
+      raw_spelling_note: "Raw file spells length columns as product_name_lenght and product_description_lenght; Silver normalizes to *_length."
+      columns:
+        - "product_id"
+        - "product_category_name"
+        - "product_name_lenght"
+        - "product_description_lenght"
+        - "product_photos_qty"
+        - "product_weight_g"
+        - "product_length_cm"
+        - "product_height_cm"
+        - "product_width_cm"
+    olist_sellers_dataset:
+      filename: "olist_sellers_dataset.csv"
+      primary_key: ["seller_id"]
+      columns:
+        - "seller_id"
+        - "seller_zip_code_prefix"
+        - "seller_city"
+        - "seller_state"
+    olist_customers_dataset:
+      filename: "olist_customers_dataset.csv"
+      primary_key: ["customer_id"]
+      entity_key: ["customer_unique_id"]
+      columns:
+        - "customer_id"
+        - "customer_unique_id"
+        - "customer_zip_code_prefix"
+        - "customer_city"
+        - "customer_state"
+    olist_geolocation_dataset:
+      filename: "olist_geolocation_dataset.csv"
+      aggregation_key: ["geolocation_zip_code_prefix"]
+      columns:
+        - "geolocation_zip_code_prefix"
+        - "geolocation_lat"
+        - "geolocation_lng"
+        - "geolocation_city"
+        - "geolocation_state"
+    product_category_name_translation:
+      filename: "product_category_name_translation.csv"
+      primary_key: ["product_category_name"]
+      columns:
+        - "product_category_name"
+        - "product_category_name_english"
+
+# O2: Analytical grain, aggregation and geolocation cleaning
+o2_grain_and_cleaning:
+  fact_table: "fact_order_fulfillment"
+  fact_grain: "one row per order_id"
+  timestamp_timezone_source: "America/Sao_Paulo"
+  timestamp_storage: "naive_utc_equivalent_sao_paulo_consistent"
+  units:
+    currency: "BRL"
+    weight: "g"
+    length: "cm"
+    volume: "cm3"
+    density: "g_per_cm3"
+    distance: "km"
+    duration: "days_float64"
+  item_aggregation:
+    group_by: "order_id"
+    fields:
+      item_count: "COUNT(order_item_id)"
+      distinct_seller_count: "COUNT(DISTINCT seller_id)"
+      distinct_product_count: "COUNT(DISTINCT product_id)"
+      is_multi_seller: "COUNT(DISTINCT seller_id) > 1"
+      total_item_price_brl: "SUM(price)"
+      total_freight_brl: "SUM(freight_value)"
+      total_weight_g: "SUM(product_weight_g)"
+      total_volume_cm3: "SUM(product_length_cm * product_height_cm * product_width_cm)"
+      earliest_shipping_limit_date: "MIN(shipping_limit_date)"
+      primary_seller_id: "seller_id with MAX(SUM(price + freight_value)) per order, tie-break MIN(seller_id) lexicographically"
+  payment_aggregation:
+    group_by: "order_id"
+    fields:
+      payment_row_count: "COUNT(payment_sequential)"
+      total_payment_value_brl: "SUM(payment_value)"
+      max_payment_installments: "MAX(payment_installments)"
+      primary_payment_type: "payment_type with MAX(SUM(payment_value)) per order, tie-break MIN(payment_type) lexicographically"
+  review_aggregation:
+    group_by: "order_id"
+    usage_scope: "diagnostic_and_post_hoc_only_never_feature_or_target"
+    fields:
+      review_count: "COUNT(review_id)"
+      min_review_score: "MIN(review_score)"
+      latest_review_answer_timestamp: "MAX(review_answer_timestamp)"
+  geolocation_cleaning:
+    dedup_rule: "drop exact 5-column duplicate rows in Silver before aggregation"
+    brazil_bounding_box:
+      lat_min: -33.75116944
+      lat_max: 5.27438888
+      lng_min: -73.98283055
+      lng_max: -34.79314722
+    zip_aggregation: "GROUP BY geolocation_zip_code_prefix using MEDIAN(geolocation_lat), MEDIAN(geolocation_lng) over in-bounds rows"
+    missing_or_out_of_bounds_policy: "retain order row; set lat/lng/distance to NULL and set geo_missing_flag = 1"
+  invalid_dimension_policy:
+    condition: "weight_g <= 0 OR length_cm <= 0 OR height_cm <= 0 OR width_cm <= 0 OR any IS NULL"
+    action: "set volume_cm3 and density_g_per_cm3 to NULL and set dim_missing_flag = 1; never impute before split"
+  reconciliation_invariants:
+    - "COUNT(DISTINCT order_id) in fact_order_fulfillment == COUNT(order_id) in Silver orders"
+    - "SUM(total_item_price_brl) across orders with items == SUM(price) in Silver order_items (within 1e-6)"
+    - "SUM(total_freight_brl) across orders with items == SUM(freight_value) in Silver order_items (within 1e-6)"
+    - "SUM(total_payment_value_brl) across orders with payments == SUM(payment_value) in Silver order_payments (within 1e-6)"
+
+# O3: Prediction moment, targets and eligibility
+o3_prediction_and_targets:
+  prediction_cutoff_t0: "order_approved_at"
+  dispatch_task_status: "excluded_by_user_decision_F1"
+  post_cutoff_forbidden_in_features:
+    - "order_delivered_carrier_date"
+    - "order_delivered_customer_date"
+    - "order_status_post_approval_transitions"
+    - "review_score"
+    - "review_creation_date"
+    - "review_answer_timestamp"
+  promised_deadline_field: "order_estimated_delivery_date"
+  promised_deadline_availability: "informed to customer at purchase moment (t_purchase <= t0); valid at t0 when order_estimated_delivery_date >= DATE_TRUNC('day', order_approved_at)"
+  targets:
+    y_days:
+      formula: "(order_delivered_customer_date - order_approved_at) / 86400.0"
+      units: "days_float64"
+    promised_days:
+      formula: "(order_estimated_delivery_date - order_approved_at) / 86400.0"
+      units: "days_float64"
+    y_late:
+      formula: "1 if order_delivered_customer_date > order_estimated_delivery_date else 0"
+      comparison_semantics: "exact timestamp comparison against raw order_estimated_delivery_date (midnight 00:00:00 of promised date); recorded alongside end-of-day (+23:59:59) sensitivity check in T5"
+  eligibility_and_exclusion_codes:
+    ELIGIBLE_MATURE: "order_approved_at IS NOT NULL AND item_count >= 1 AND order_status == 'delivered' AND order_delivered_customer_date IS NOT NULL AND y_days > 0 AND order_delivered_customer_date <= split_boundary_T"
+    EXCL_MISSING_APPROVAL: "order_approved_at IS NULL"
+    EXCL_NO_ITEMS: "item_count == 0"
+    EXCL_CANCELED_OR_UNAVAILABLE: "order_status IN ('canceled', 'unavailable')"
+    EXCL_UNDELIVERED_OR_MISSING_DELIVERY_TS: "order_status != 'delivered' OR order_delivered_customer_date IS NULL"
+    EXCL_NONPOSITIVE_DURATION: "order_delivered_customer_date <= order_approved_at"
+    EXCL_IMMATURE_AT_SPLIT_BOUNDARY: "order_delivered_customer_date > split_boundary_T"
+
+# O4: Temporal splits and historical information availability
+o4_splits_and_history:
+  ordering_timestamp: "order_approved_at"
+  split_method: "chronological_quantiles_on_eligible_orders_with_purge_gap"
+  proportions:
+    train: 0.70
+    val_calibration: 0.15
+    holdout_test: 0.15
+  label_maturity_rule: "A training or calibration split ending at cutoff T_split may only consume labels where order_delivered_customer_date <= T_split; orders approved before T_split but delivered after T_split are excluded from fitting at T_split (EXCL_IMMATURE_AT_SPLIT_BOUNDARY)."
+  history_refresh_mode: "rolling_observed_outcomes_strictly_before_t0"
+  preprocessing_scope: "fit encoders, imputers, scalers and quantile calibration strictly on train/val_calibration; freeze before holdout_test access"
+  uncertainty_grouping: "block bootstrap by (seller_primary_id, approval_week)"
+
+# O5: Point-in-time features and numerics
+o5_features_and_numerics:
+  earth_radius_km: 6371.0088
+  distance_features:
+    - "primary_seller_haversine_km"
+    - "max_seller_haversine_km"
+    - "mean_seller_haversine_km"
+    - "is_interstate"
+    - "geo_missing_flag"
+  order_and_product_features:
+    - "item_count"
+    - "distinct_seller_count"
+    - "distinct_product_count"
+    - "is_multi_seller"
+    - "total_item_price_brl"
+    - "total_freight_brl"
+    - "freight_to_price_ratio"
+    - "total_weight_g"
+    - "total_volume_cm3"
+    - "volumetric_density_g_per_cm3"
+    - "dim_missing_flag"
+    - "promised_days"
+    - "approval_lag_hours"
+    - "shipping_limit_days_from_approval"
+    - "approval_dow"
+    - "approval_month"
+    - "primary_payment_type"
+    - "max_payment_installments"
+  seller_rolling_history:
+    window_days: 30
+    congestion_order_count_30d:
+      eligibility: "prior orders o' of primary_seller_id with (t0 - 30 days) <= o'.order_approved_at < t0"
+    seller_delivered_count_30d:
+      eligibility: "prior orders o' of primary_seller_id with (t0 - 30 days) <= o'.order_approved_at < t0 AND o'.order_delivered_customer_date <= t0"
+    seller_late_rate_30d_smoothed:
+      eligibility: "same mature delivered set as seller_delivered_count_30d"
+      smoothing: "empirical_bayes_prior"
+      prior_weight_m: 5.0
+      formula: "(seller_late_count_30d + m * global_prior_late_rate_at_t0) / (seller_delivered_count_30d + m)"
+    seller_median_eta_days_30d:
+      eligibility: "same mature delivered set; NULL when seller_delivered_count_30d < 3"
+    cold_start_policy:
+      min_mature_orders: 3
+      flag_field: "seller_cold_start_flag"
+      raw_rate_when_cold_start: null
+  zero_denominator_policy:
+    freight_to_price_ratio: "NULL when total_item_price_brl <= 0"
+    volumetric_density_g_per_cm3: "NULL when total_volume_cm3 <= 0 or dim_missing_flag == 1"
+  numeric_types_and_tolerances:
+    float_type: "float64"
+    int_type: "int64"
+    local_vs_cloud_parity_abs_tol: 1.0e-6
+    local_vs_cloud_parity_rel_tol: 1.0e-6
+
+# O6: Modeling, baselines and evaluation protocol
+o6_modeling_and_evaluation:
+  execution_rule: "Non-learned arithmetic/SQL baselines may run locally; every learned model fit runs remotely on AWS SageMaker in ap-southeast-2 (PRD F2)."
+  random_seed: 42
+  eta_task:
+    target: "y_days"
+    quantiles: [0.10, 0.50, 0.90]
+    nominal_interval_coverage: 0.80
+    baselines:
+      B0_platform_promised: "promised_days = (order_estimated_delivery_date - order_approved_at) / 86400.0 (point baseline)"
+      B1_corridor_empirical_quantiles: "train-split empirical P10/P50/P90 grouped by (seller_state, customer_state) with global fallback when group count < 20"
+    candidates:
+      M1_lightgbm_quantile: "LightGBM quantile regression fitted for alpha in {0.10, 0.50, 0.90}"
+      M1_conformalized_optional: "Split conformal calibration on val_calibration if raw interval coverage deviates by more than 0.03 from 0.80"
+    crossing_policy: "Record raw crossing rate first; apply isotonic/sort repair post-hoc as a declared deterministic transform fitted/validated on development data only."
+    metrics:
+      - "mae_p50_days"
+      - "pinball_loss_p10"
+      - "pinball_loss_p50"
+      - "pinball_loss_p90"
+      - "mean_pinball_loss"
+      - "interval_coverage_80"
+      - "interval_mean_width_days"
+      - "quantile_crossing_rate"
+  delay_risk_task:
+    target: "y_late"
+    baselines:
+      B0_corridor_historical_rate: "train-split empirical late rate by (seller_state, customer_state) with global prior smoothing"
+      B1_eta_margin_heuristic: "monotonic score from (B1_p90_days - promised_days)"
+    candidates:
+      M2_catboost_or_xgboost: "CatBoost or XGBoost binary classifier + Platt/isotonic probability calibration on val_calibration"
+    operating_threshold_policy: "Select threshold tau* on val_calibration by maximizing F1 (and separately reporting precision/recall at top-10% alert volume budget); freeze tau* before holdout_test."
+    metrics:
+      - "roc_auc"
+      - "pr_auc"
+      - "brier_score"
+      - "expected_calibration_error_10bin"
+      - "precision_at_tau"
+      - "recall_at_tau"
+      - "f1_at_tau"
+      - "precision_at_top10pct"
+  explainability:
+    method: "TreeSHAP on frozen M2 model over a deterministic 1,000-order background sample from train and scored batches"
+    interpretation_boundary: "associational feature attribution only; never claimed as causal effect or prevented churn"
+
+# O7: AWS environment, service sizing and bounded cost model
+o7_aws_and_cost:
+  account_id: "149270211548"
+  cli_profile: "waymark"
+  region: "ap-southeast-2"
+  total_budget_cap_usd: 30.00
+  pilot_target_burn_usd: 8.50
+  safety_margin_usd: 21.50
+  user_prerequisites_before_c1:
+    U1_console_project: "Create dedicated Waymark project / Resource Group in AWS Console (account 149270211548, ap-southeast-2) bound to tag Project=waymark"
+    U2_budget_alert: "Create AWS Budgets cost alert at USD 15.00 (50%) and USD 25.00 (83%) hard-warning thresholds beneath the USD 30.00 cap"
+  service_sizing_decisions:
+    etl_engine:
+      choice: "aws_glue_python_shell_0_0625_dpu_plus_athena_ctas"
+      spark_dpu_rejected_reason: "Olist uncompressed CSV total is ~126 MB; Glue Spark minimum 2 DPU ($0.44/DPU-hr) is oversized. Glue Python Shell at 0.0625 DPU ($0.0275/hr, 1-min minimum) plus Athena CTAS ($5/TB scanned, 10 MB minimum) processes the entire dataset for < $0.05 per run."
+    sagemaker_training:
+      container_strategy: "Extend official ap-southeast-2 sagemaker-scikit-learn / sagemaker-xgboost script-mode container with pinned requirements.txt (lightgbm, catboost, shap) or JumpStart script mode"
+      instance_type: "ml.m5.large"
+      on_demand_rate_usd_per_hr: 0.144
+      use_spot_instances: true
+      max_run_seconds_per_job: 1800
+      max_wait_seconds_per_job: 3600
+      planned_job_budget: "at most 10 training/evaluation runs across T6 and T7"
+    sagemaker_batch_transform:
+      instance_type: "ml.m5.large"
+      instance_count: 1
+      max_concurrent_transforms: 2
+      planned_job_budget: "at most 6 batch transform runs during T8 verification and retry tests"
+  stage_cost_ceiling_usd:
+    C1_s3_glue_athena_slice: 1.50
+    T6_T7_remote_sagemaker_training: 3.00
+    T8_batch_transform_and_trigger: 2.50
+    T9_logs_state_requests_and_buffer: 1.50
+    total_planned_ceiling_usd: 8.50
+
+# O8: Batch delivery, schedule adapter and idempotent publication
+o8_batch_delivery:
+  trigger_finding: "EventBridge Scheduler Universal Target arn:aws:scheduler:::aws-sdk:sagemaker:createTransformJob requires a unique TransformJobName per run and cannot concatenate dynamic timestamps inside a JSON string field natively on recurring schedules."
+  selected_trigger_architecture: "EventBridge Scheduler schedule -> lightweight AWS Lambda trigger adapter (Python 3.12, arm64, 128 MB, <5s) -> sagemaker:CreateTransformJob with deterministic unique job name"
+  logical_batch_identity:
+    formula: "SHA256(model_artifact_hash + ':' + input_snapshot_hash + ':' + scoring_cutoff_date + ':' + config_version)[:16]"
+    transform_job_name_format: "wm-bt-{logical_batch_id}-{attempt_seq}"
+  idempotency_and_failure_rules:
+    duplicate_trigger_behavior: "Before calling CreateTransformJob, the Lambda adapter checks S3 for Gold publication marker _SUCCESS_{logical_batch_id}.json or an active TransformJob with prefix wm-bt-{logical_batch_id}; if present, it logs DUPLICATE_SKIPPED and exits 0 without starting a second job."
+    partial_output_isolation: "Batch Transform writes raw outputs to s3://{bucket}/staging/batch_Raw/{logical_batch_id}/{attempt_seq}/; a post-job publisher validates row count == input eligible order count and schema compatibility before writing final Parquet to s3://{bucket}/gold/predictions/batch_id={logical_batch_id}/ and committing _SUCCESS_{logical_batch_id}.json."
+    reader_contract: "Athena view vw_latest_batch_predictions filters strictly on batch_id values that possess a verified manifest entry in gold/prediction_manifests/, ensuring partial or failed staging outputs are never visible to BI queries."
