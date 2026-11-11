@@ -1,0 +1,56 @@
+[project]
+name = "waymark"
+version = "0.1.0"
+description = "End-to-end e-commerce fulfillment analytics, approval-time ETA quantile regression, and delay-risk batch system"
+readme = "README.md"
+authors = [
+    { name = "Teo Jun Jie", email = "jasonteo1408@gmail.com" }
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pyarrow>=17.0",
+    "duckdb>=1.1",
+    "pyyaml>=6.0",
+    "pydantic>=2.9",
+    "boto3>=1.35",
+    "awscrt>=0.38.1",
+]
+
+[project.optional-dependencies]
+# Remote training / Batch Transform container dependencies (never fitted on local hardware per PRD F2)
+remote-ml = [
+    "lightgbm>=4.5",
+    "catboost>=1.2.7",
+    "scikit-learn>=1.5",
+    "shap>=0.46",
+]
+
+[project.scripts]
+waymark = "waymark.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "hypothesis>=6.115",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "cloud: live AWS read/write integration checks (disabled by default)",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

@@ -1,0 +1,42 @@
+# Python environments and generated output
+/.venv/
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/.ruff_cache/
+/.mypy_cache/
+/.coverage
+/htmlcov/
+/build/
+**/build/
+/dist/
+*.egg-info/
+/.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Local data, model state, raw run records and scratch work
+/data/
+/checkpoints/
+/experiments/
+/tmp/
+
+# Terraform working state and saved plans; keep provider lockfiles shareable
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+!*.example.tfvars
+!*.example.tfvars.json
+crash.log
+crash.*.log
+
+# Secrets, credentials and machine-local output
+.env
+.env.*
+!.env.example
+/.aws/
+*.log
+.DS_Store
+Thumbs.db
