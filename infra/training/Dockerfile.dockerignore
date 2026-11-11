@@ -1,0 +1,8 @@
+**
+!src/
+!src/waymark/
+!src/waymark/remote_requirements.txt
+!infra/
+!infra/training/
+!infra/training/Dockerfile
+!infra/training/Dockerfile.dockerignore

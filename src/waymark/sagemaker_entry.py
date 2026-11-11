@@ -98,7 +98,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--source-sha256")
     parser.add_argument("--snapshot-id")
     parser.add_argument("--image-uri", required=True)
-    parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument(
+        "--preflight-only",
+        nargs="?",
+        const="true",
+        default="false",
+        type=str.lower,
+        choices=["true", "false"],
+    )
     parser.add_argument("--preflight-output")
     args = parser.parse_args(argv)
     requirements = Path(__file__).with_name("remote_requirements.txt")
@@ -107,7 +114,7 @@ def main(argv: list[str] | None = None) -> None:
     source_inventory = verify_packaged_source(Path(__file__).resolve().parents[1])
     environment = capture_environment(args.image_uri, requirements)
     environment["source_inventory_sha256"] = source_inventory
-    if args.preflight_only:
+    if args.preflight_only == "true":
         if args.preflight_output:
             write_immutable(Path(args.preflight_output), canonical_json(environment))
         print(json.dumps(environment))

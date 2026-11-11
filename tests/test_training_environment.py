@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from waymark.artifacts import sha256_file
+from waymark.sagemaker_entry import main
 from waymark.training import create_sourcedir_tarball
 from waymark.training_environment import (
     capture_environment,
@@ -22,6 +23,20 @@ from waymark.training_environment import (
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "149270211548.dkr.ecr.ap-southeast-2.amazonaws.com/test@sha256:" + "a" * 64
 REQUIREMENTS = ROOT / "src/waymark/remote_requirements.txt"
+
+
+@pytest.mark.parametrize(
+    "preflight", [["--preflight-only"], ["--preflight-only", "true"], ["--preflight-only", "True"]]
+)
+def test_preflight_accepts_cli_and_toolkit_value_without_fitting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preflight: list[str]
+) -> None:
+    monkeypatch.setattr("waymark.sagemaker_entry.verify_packaged_source", lambda *_: "verified-source")
+    monkeypatch.setattr("waymark.sagemaker_entry.capture_environment", lambda *_: {"status": "PASS"})
+    monkeypatch.delenv("SM_TRAINING_ENV", raising=False)
+    receipt = tmp_path / "environment.json"
+    main(["--image-uri", IMAGE, "--preflight-output", str(receipt), *preflight])
+    assert receipt.is_file()
 
 
 def test_environment_receipt_requires_real_interpreter_versions_and_imports() -> None:
