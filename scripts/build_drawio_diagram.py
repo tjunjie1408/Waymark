@@ -12,6 +12,7 @@ Adheres strictly to the user reference image (Amazon MWAA Architecture style):
 - Strictly orthogonal right-angled lines (rounded=0, curved=0)
 - ZERO plan, phase, milestone, or stage terminology
 """
+
 import os
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
@@ -55,7 +56,11 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="arch_title",
-        value="<font style='font-size: 30px; font-weight: 800; color: #0F2042; font-family: Segoe UI, Helvetica, Arial, sans-serif;'>Waymark Fulfillment Batch Architecture</font>",
+        value=(
+            "<font style='font-size: 30px; font-weight: 800; color: #0F2042; font-f"
+            "amily: Segoe UI, Helvetica, Arial, sans-serif;'>Waymark Fulfillment Ba"
+            "tch Architecture</font>"
+        ),
         style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;",
         vertex="1",
         parent="1",
@@ -94,7 +99,10 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="lbl_region",
-        value="<font style='font-size: 13px; font-weight: bold; color: #D81B60;'>AWS Cloud: Region ap-southeast-2 (Sydney) | Account: 149270211548</font>",
+        value=(
+            "<font style='font-size: 13px; font-weight: bold; color: #D81B60;'>AWS "
+            "Cloud: Region ap-southeast-2 (Sydney) | Account: 149270211548</font>"
+        ),
         style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;",
         vertex="1",
         parent="1",
@@ -162,7 +170,9 @@ def build_aws_reference_drawio():
         vertex="1",
         parent="box_lake",
     )
-    geo = ET.SubElement(box_lake_title, "mxGeometry", x="10", y="180", width="610", height="25", as_="geometry")
+    geo = ET.SubElement(
+        box_lake_title, "mxGeometry", x="10", y="180", width="610", height="25", as_="geometry"
+    )
     geo.set("as", "geometry")
 
     # Three S3 Tier Blocks
@@ -170,7 +180,10 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="node_bronze",
-        value="<b>Bronze Lake</b><br/><font color='#6B7280' style='font-size:10px;'>Raw Olist Data<br/>Source Manifests</font>",
+        value=(
+            "<b>Bronze Lake</b><br/><font color='#6B7280' style='font-size:10px;'>R"
+            "aw Olist Data<br/>Source Manifests</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E65100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;",
         vertex="1",
         parent="box_lake",
@@ -182,7 +195,10 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="node_silver",
-        value="<b>Silver Lake</b><br/><font color='#6B7280' style='font-size:10px;'>Cleaned Tables<br/>Key Reconciled</font>",
+        value=(
+            "<b>Silver Lake</b><br/><font color='#6B7280' style='font-size:10px;'>C"
+            "leaned Tables<br/>Key Reconciled</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E65100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;",
         vertex="1",
         parent="box_lake",
@@ -194,7 +210,10 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="node_gold",
-        value="<b>Gold Lake</b><br/><font color='#6B7280' style='font-size:10px;'>Fact & Dim Models<br/>Point-in-Time Features</font>",
+        value=(
+            "<b>Gold Lake</b><br/><font color='#6B7280' style='font-size:10px;'>Fac"
+            "t & Dim Models<br/>Point-in-Time Features</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E65100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;",
         vertex="1",
         parent="box_lake",
@@ -224,14 +243,19 @@ def build_aws_reference_drawio():
         vertex="1",
         parent="box_query",
     )
-    geo = ET.SubElement(box_query_title, "mxGeometry", x="10", y="195", width="610", height="25", as_="geometry")
+    geo = ET.SubElement(
+        box_query_title, "mxGeometry", x="10", y="195", width="610", height="25", as_="geometry"
+    )
     geo.set("as", "geometry")
 
     node_glue = ET.SubElement(
         root_cell,
         "mxCell",
         id="node_glue",
-        value="<b>AWS Glue Catalog</b><br/><font color='#6B7280' style='font-size:10px;'>Schema Registry<br/>Python Shell (0.0625 DPU)</font>",
+        value=(
+            "<b>AWS Glue Catalog</b><br/><font color='#6B7280' style='font-size:10p"
+            "x;'>Schema Registry<br/>Python Shell (0.0625 DPU)</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.glue;",
         vertex="1",
         parent="box_query",
@@ -243,7 +267,10 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="node_athena",
-        value="<b>Amazon Athena v3</b><br/><font color='#6B7280' style='font-size:10px;'>Interactive Analytics<br/>1 GB Query Cutoff Guard</font>",
+        value=(
+            "<b>Amazon Athena v3</b><br/><font color='#6B7280' style='font-size:10p"
+            "x;'>Interactive Analytics<br/>1 GB Query Cutoff Guard</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.athena;",
         vertex="1",
         parent="box_query",
@@ -310,14 +337,19 @@ def build_aws_reference_drawio():
         vertex="1",
         parent="box_train",
     )
-    geo = ET.SubElement(box_train_title, "mxGeometry", x="10", y="180", width="610", height="25", as_="geometry")
+    geo = ET.SubElement(
+        box_train_title, "mxGeometry", x="10", y="180", width="610", height="25", as_="geometry"
+    )
     geo.set("as", "geometry")
 
     node_m1 = ET.SubElement(
         root_cell,
         "mxCell",
         id="node_m1",
-        value="<b>M1 Delivery ETA</b><br/><font color='#6B7280' style='font-size:10px;'>LightGBM Quantiles<br/>Split-Conformal Bounds</font>",
+        value=(
+            "<b>M1 Delivery ETA</b><br/><font color='#6B7280' style='font-size:10px"
+            ";'>LightGBM Quantiles<br/>Split-Conformal Bounds</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#01A88D;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker_2;",
         vertex="1",
         parent="box_train",
@@ -329,7 +361,10 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="node_m2",
-        value="<b>M2 Delay Risk</b><br/><font color='#6B7280' style='font-size:10px;'>CatBoost Classifier<br/>Platt & SHAP Attribution</font>",
+        value=(
+            "<b>M2 Delay Risk</b><br/><font color='#6B7280' style='font-size:10px;'"
+            ">CatBoost Classifier<br/>Platt & SHAP Attribution</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#01A88D;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker_2;",
         vertex="1",
         parent="box_train",
@@ -359,14 +394,19 @@ def build_aws_reference_drawio():
         vertex="1",
         parent="box_batch",
     )
-    geo = ET.SubElement(box_batch_title, "mxGeometry", x="10", y="195", width="610", height="25", as_="geometry")
+    geo = ET.SubElement(
+        box_batch_title, "mxGeometry", x="10", y="195", width="610", height="25", as_="geometry"
+    )
     geo.set("as", "geometry")
 
     node_eb = ET.SubElement(
         root_cell,
         "mxCell",
         id="node_eb",
-        value="<b>EventBridge</b><br/><font color='#6B7280' style='font-size:10px;'>Daily Schedule<br/>Automated Trigger</font>",
+        value=(
+            "<b>EventBridge</b><br/><font color='#6B7280' style='font-size:10px;'>D"
+            "aily Schedule<br/>Automated Trigger</font>"
+        ),
         style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.eventbridge_scheduler;",
         vertex="1",
         parent="box_batch",
@@ -378,7 +418,10 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="node_lambda",
-        value="<b>Lambda Adapter</b><br/><font color='#6B7280' style='font-size:10px;'>Python 3.12 arm64<br/>_SUCCESS Guard</font>",
+        value=(
+            "<b>Lambda Adapter</b><br/><font color='#6B7280' style='font-size:10px;"
+            "'>Python 3.12 arm64<br/>_SUCCESS Guard</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;",
         vertex="1",
         parent="box_batch",
@@ -390,7 +433,10 @@ def build_aws_reference_drawio():
         root_cell,
         "mxCell",
         id="node_bt",
-        value="<b>Batch Transform</b><br/><font color='#6B7280' style='font-size:10px;'>SageMaker Offline<br/>ml.m5.large Predictor</font>",
+        value=(
+            "<b>Batch Transform</b><br/><font color='#6B7280' style='font-size:10px"
+            ";'>SageMaker Offline<br/>ml.m5.large Predictor</font>"
+        ),
         style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#01A88D;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker_2;",
         vertex="1",
         parent="box_batch",
@@ -421,7 +467,9 @@ def build_aws_reference_drawio():
         vertex="1",
         parent="1",
     )
-    geo = ET.SubElement(vpce_data_lbl, "mxGeometry", x="760", y="200", width="80", height="30", as_="geometry")
+    geo = ET.SubElement(
+        vpce_data_lbl, "mxGeometry", x="760", y="200", width="80", height="30", as_="geometry"
+    )
     geo.set("as", "geometry")
 
     # VPCE Icon 2 (Inference Result Interface)
@@ -681,14 +729,35 @@ def build_aws_reference_drawio():
 
     # 9 Foundational Service Icons along the bottom
     services = [
-        ("svc_cw", "Amazon CloudWatch", "Log Management & Metrics", "mxgraph.aws4.cloudwatch_2", "#E7157B", 135),
+        (
+            "svc_cw",
+            "Amazon CloudWatch",
+            "Log Management & Metrics",
+            "mxgraph.aws4.cloudwatch_2",
+            "#E7157B",
+            135,
+        ),
         ("svc_s3", "Amazon S3", "Object Lake Storage", "mxgraph.aws4.s3", "#7AA116", 301),
         ("svc_glue", "AWS Glue", "Unified Data Catalog", "mxgraph.aws4.glue", "#8C4FFF", 467),
         ("svc_athena", "Amazon Athena", "Serverless SQL Engine", "mxgraph.aws4.athena", "#8C4FFF", 633),
         ("svc_sm", "Amazon SageMaker", "ML Training & Inference", "mxgraph.aws4.sagemaker_2", "#01A88D", 800),
         ("svc_lambda", "AWS Lambda", "Event-Driven Compute", "mxgraph.aws4.lambda", "#ED7100", 967),
-        ("svc_eb", "Amazon EventBridge", "Scheduled Event Router", "mxgraph.aws4.eventbridge_scheduler", "#E7157B", 1133),
-        ("svc_iam", "AWS IAM", "Least-Privilege Roles", "mxgraph.aws4.identity_and_access_management", "#DD344C", 1299),
+        (
+            "svc_eb",
+            "Amazon EventBridge",
+            "Scheduled Event Router",
+            "mxgraph.aws4.eventbridge_scheduler",
+            "#E7157B",
+            1133,
+        ),
+        (
+            "svc_iam",
+            "AWS IAM",
+            "Least-Privilege Roles",
+            "mxgraph.aws4.identity_and_access_management",
+            "#DD344C",
+            1299,
+        ),
         ("svc_budgets", "AWS Budgets", "Cost Anomaly & Alerts", "mxgraph.aws4.budgets_2", "#7AA116", 1465),
     ]
 
@@ -720,7 +789,9 @@ def build_aws_reference_drawio():
             vertex="1",
             parent="1",
         )
-        geo_s = ET.SubElement(s_cell, "mxGeometry", x=str(sx - 28), y="765", width="56", height="56", as_="geometry")
+        geo_s = ET.SubElement(
+            s_cell, "mxGeometry", x=str(sx - 28), y="765", width="56", height="56", as_="geometry"
+        )
         geo_s.set("as", "geometry")
 
     # Format XML string

@@ -4,7 +4,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@next-ai-drawio/mcp-server@latest"
+        "@next-ai-drawio/mcp-server@0.4.13"
       ]
     }
   }
