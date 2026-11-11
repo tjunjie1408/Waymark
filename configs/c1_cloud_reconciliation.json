@@ -1,0 +1,104 @@
+{
+  "status": "OK",
+  "stage": "C1",
+  "gate": "WM1_VERIFIED",
+  "contract_id": "wm0_v1",
+  "contract_version": "1.0.0",
+  "aws_account_id": "149270211548",
+  "aws_region": "ap-southeast-2",
+  "lake_bucket": "waymark-lake-pilot-149270211548-ap-southeast-2",
+  "glue_database": "waymark_pilot_db",
+  "athena_workgroup": "waymark_pilot_wg",
+  "tables_registered": [
+    "silver_category_translations",
+    "silver_customers",
+    "silver_geolocation_zip",
+    "silver_order_items",
+    "silver_order_payments",
+    "silver_order_reviews",
+    "silver_orders",
+    "silver_products",
+    "silver_sellers",
+    "dim_customer",
+    "dim_geolocation_zip",
+    "dim_product",
+    "dim_seller",
+    "fact_order_fulfillment",
+    "order_features_and_splits"
+  ],
+  "upload_summary": {
+    "scripts": 1,
+    "silver": 9,
+    "gold": 6,
+    "manifests": 5
+  },
+  "glue_job_execution": {
+    "job_name": "waymark-pilot-medallion-pythonshell",
+    "job_run_id": "jr_da246d89879fd2fb8b087081a6368ad0922d9ac85fbbf45ad338b6464dd78b5e",
+    "status": "SUCCEEDED",
+    "execution_time_seconds": 16,
+    "allocated_dpu": 0,
+    "estimated_cost_usd": 0.0
+  },
+  "athena_reconciliation": {
+    "table_row_counts": {
+      "silver_orders": 99441,
+      "fact_order_fulfillment": 99441,
+      "dim_customer": 99441,
+      "dim_seller": 3095,
+      "dim_product": 32951,
+      "dim_geolocation_zip": 19010,
+      "order_features_and_splits": 99441
+    },
+    "athena_monetary_summary": {
+      "total_orders": 99441,
+      "sum_items": 112650,
+      "sum_price_brl": 13591643.7,
+      "sum_freight_brl": 2251909.54,
+      "sum_payment_brl": 16008872.12
+    },
+    "athena_splits_summary": {
+      "EXCLUDED": 3046,
+      "EXCL_IMMATURE_AT_TRAIN_BOUNDARY": 3072,
+      "EXCL_IMMATURE_AT_VAL_BOUNDARY": 1908,
+      "holdout_test": 14460,
+      "train": 64404,
+      "val_calibration": 12551
+    },
+    "athena_top_5_corridors": [
+      {
+        "state_corridor": "SP->SP",
+        "eligible_orders": 30675,
+        "mean_eta_days": 7.5543,
+        "mean_distance_km": 150.15
+      },
+      {
+        "state_corridor": "SP->RJ",
+        "eligible_orders": 8152,
+        "mean_eta_days": 15.8945,
+        "mean_distance_km": 440.95
+      },
+      {
+        "state_corridor": "SP->MG",
+        "eligible_orders": 7433,
+        "mean_eta_days": 11.9343,
+        "mean_distance_km": 495.2
+      },
+      {
+        "state_corridor": "SP->RS",
+        "eligible_orders": 3591,
+        "mean_eta_days": 15.67,
+        "mean_distance_km": 906.49
+      },
+      {
+        "state_corridor": "SP->PR",
+        "eligible_orders": 3118,
+        "mean_eta_days": 12.3189,
+        "mean_distance_km": 463.12
+      }
+    ],
+    "gate_wm1_status": "PASSED",
+    "total_athena_bytes_scanned": 2616933,
+    "estimated_athena_cost_usd": 1.2e-05
+  }
+}
