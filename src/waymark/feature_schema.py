@@ -49,3 +49,19 @@ CATEGORICAL_FEATURES = [
 IDENTITY_COLUMNS = ["primary_seller_id"]
 NUMERICAL_FEATURES = [name for name in FEATURE_COLUMNS if name not in CATEGORICAL_FEATURES + IDENTITY_COLUMNS]
 MODEL_FEATURES = NUMERICAL_FEATURES + CATEGORICAL_FEATURES
+
+
+def encode_with_levels(frame, levels):
+    """Apply frozen train-only categorical levels without learning from scoring rows."""
+    import numpy as np
+    import pandas as pd
+
+    if np.isinf(frame[NUMERICAL_FEATURES].to_numpy(dtype=float)).any():
+        raise ValueError("Infinite model feature values are invalid; missing values remain explicit")
+    encoded = frame[MODEL_FEATURES].copy()
+    native = frame[MODEL_FEATURES].copy()
+    for column in CATEGORICAL_FEATURES:
+        values = frame[column].fillna("__MISSING__").astype(str)
+        encoded[column] = pd.Categorical(values.where(values.isin(levels[column])), categories=levels[column])
+        native[column] = values
+    return encoded, native

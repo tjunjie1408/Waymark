@@ -24,24 +24,23 @@ from waymark.evaluation import (
 )
 from waymark.evaluation import expected_calibration_error as expected_calibration_error
 from waymark.evaluation import pinball_loss as pinball_loss
-from waymark.feature_schema import CATEGORICAL_FEATURES, MODEL_FEATURES, NUMERICAL_FEATURES  # noqa: F401
+from waymark.feature_schema import (  # noqa: F401
+    CATEGORICAL_FEATURES,
+    MODEL_FEATURES,
+    NUMERICAL_FEATURES,
+    encode_with_levels,
+)
 from waymark.training_environment import capture_environment, verify_packaged_source
 
 METHOD_ID = "waymark.training/v2"
 
 
 def prepare_features(train: pd.DataFrame, frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if np.isinf(frame[NUMERICAL_FEATURES].to_numpy(dtype=float)).any():
-        raise ValueError("Infinite model feature values are invalid; missing values remain explicit")
-    encoded = frame[MODEL_FEATURES].copy()
-    native = frame[MODEL_FEATURES].copy()
-    for column in CATEGORICAL_FEATURES:
-        categories = sorted(train[column].fillna("__MISSING__").astype(str).unique().tolist())
-        encoded[column] = pd.Categorical(
-            frame[column].fillna("__MISSING__").astype(str), categories=categories
-        )
-        native[column] = frame[column].fillna("__MISSING__").astype(str)
-    return encoded, native
+    levels = {
+        column: sorted(train[column].fillna("__MISSING__").astype(str).unique().tolist())
+        for column in CATEGORICAL_FEATURES
+    }
+    return encode_with_levels(frame, levels)
 
 
 def validate_training_frame(frame: pd.DataFrame) -> None:
